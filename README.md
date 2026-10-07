@@ -143,15 +143,37 @@ ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
 
 ---
 
+## What's on screen
+
+- **TV launcher:**
+  - A greeting and clock.
+  - A row of service tiles showing each service's own logo. The background glow follows the focused tile.
+  - "Jump back in" focuses the service you opened last.
+  - A short opening animation plays when a service starts.
+  - A count of connected remotes.
+  - A drifting-clock screensaver after 3 minutes, so OLED TVs don't get burn-in.
+- **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects, and the touchpad cursor.
+- **Phone remote:**
+  - It shows what's on the TV and takes on that service's colour.
+  - Service tiles use the real app icons.
+  - The D-pad accepts taps or swipes; hold an arrow, ⏪/⏩ or volume to repeat.
+  - There's a volume meter, a touchpad and a keyboard.
+  - "Add to Home Screen" gives it an app icon.
+- **Quiet browser:** Chromium policies (`deploy/chromium-policy.json`) turn off password saving, notification and location prompts, translate bars, sign-in nags and downloads.
+- **No stray cursor:** cage would draw a cursor in the middle of the screen. `deploy/cursors/` is a transparent cursor theme that hides it.
+- **Volume starts at 100% on every boot.** Change it with `TVBOX_BOOT_VOLUME`; `0` leaves it alone.
+
+Logos and icons aren't stored in this repo. The Pi downloads them from Wikimedia Commons and the App Store, using the URLs in `services.json`, and caches them in `~/.local/state/tvbox/logos/`. Until a logo is available, the tile shows the service's letter instead.
+
 ## Using the remote
 
 | Remote | What it does |
 |---|---|
-| Service tiles | Opens the service |
+| Service icons | Opens the service (with an opening animation on the TV) |
 | Home / Back | Launcher / previous page (on YouTube, Back is the TV app's own back) |
-| D-pad, OK, Esc | Arrow keys, Enter, Escape |
+| D-pad, OK, Esc | Arrow keys, Enter, Escape. Tap a direction or swipe anywhere on the pad; hold to repeat |
 | ⏪ ⏯ ⏩ | Seek / play-pause (per-service keys come from `services.json`) |
-| Trackpad tab | Drag to move a cursor on the TV, tap to click, two fingers to scroll |
+| Touchpad tab | Drag to move a cursor on the TV, tap to click, two fingers to scroll |
 | Keyboard tab | Types into whatever is focused on the TV |
 | Laptop keyboard | Arrows, Enter, Esc, Backspace (Back) and Space (play/pause) are forwarded |
 
@@ -163,16 +185,20 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 {
   "id": "zee5",
   "name": "ZEE5",
+  "tagline": "Indian originals and films",
   "url": "https://www.zee5.com/",
-  "icon": "Z",
-  "color": "#8230c6",
   "match": ["zee5.com"],
+  "glyph": "Z",
+  "color": "#8230c6",
+  "tile": "linear-gradient(135deg, #2a0b4a, #8230c6)",
+  "logo": {"url": "https://…/zee5-wordmark.svg", "filter": "white"},
+  "icon": {"url": "https://…/zee5-app-icon.png", "bg": "#000"},
   "keys": {"playpause": "space", "seek_fwd": "right", "seek_back": "left", "back": "escape"},
   "user_agent": "optional UA override"
 }
 ```
 
-- `match` lists the domains used to work out which service is on screen.
+- `match` lists the domains used to work out which service is on screen. `logo` is the wordmark on the TV tile; `icon` is the square app icon on the remote. Options: `filter: "white"` makes the logo white, and `recolor` swaps SVG colours. Square App Store icons come from `https://itunes.apple.com/search?entity=software&term=<name>` (use `artworkUrl512`).
 - `keys` and `user_agent` are optional.
 
 ## Housekeeping (on the Pi)
@@ -198,7 +224,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 
 ## Reference
 
-Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`), `TVBOX_DATA_DIR` (`~/.local/state/tvbox`), `TVBOX_SERVICES`, `TVBOX_PIN` (`0` turns it off).
+Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`), `TVBOX_DATA_DIR` (`~/.local/state/tvbox`), `TVBOX_SERVICES`, `TVBOX_PIN` (`0` turns it off), `TVBOX_BOOT_VOLUME` (100; `0` leaves the volume alone).
 
 | Path | Contents |
 |---|---|
@@ -209,8 +235,9 @@ Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`
 | `server/config.py` | settings, `services.json` |
 | `web/tv/` | launcher shown on the TV |
 | `web/remote/` | phone remote |
-| `web/inject/cursor.js` | on-screen cursor, injected into every page |
-| `deploy/` | systemd units, kiosk script, PAM file |
+| `server/logos.py` | downloads and caches service logos and icons |
+| `web/inject/overlay.js` | cursor dot, volume bar and toasts, injected into every page |
+| `deploy/` | systemd units, cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
 | `install.sh` | one-time Pi setup |
 | `update.sh` | pull and apply on the Pi |
 | `scripts/dev.sh` | run everything on the laptop |

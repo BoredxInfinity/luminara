@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ class Settings:
     data_dir: Path = Path.home() / ".local" / "state" / "tvbox"
     services_file: Path = ROOT / "services.json"
     pin_enabled: bool = True
+    boot_volume: int = 100  # percent set once per boot; 0 leaves volume alone
 
     @property
     def launcher_url(self) -> str:
@@ -39,7 +41,47 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         data_dir=Path(env.get("TVBOX_DATA_DIR", s.data_dir)).expanduser(),
         services_file=Path(env.get("TVBOX_SERVICES", s.services_file)).expanduser(),
         pin_enabled=env.get("TVBOX_PIN", "1") not in ("0", "false", "no"),
+        boot_volume=max(0, min(100, int(env.get("TVBOX_BOOT_VOLUME", s.boot_volume)))),
     )
+
+
+@dataclass(frozen=True)
+class Art:
+    """A logo or app icon fetched from `url` and cached by the server (server/logos.py).
+
+    recolor: SVG colour swaps, e.g. dark wordmark text -> white for dark tiles.
+    filter:  "white" renders the image as a white silhouette.
+    bg/size/position: how the remote draws a square icon (CSS background values).
+    """
+
+    url: str
+    recolor: tuple[tuple[str, str], ...] = ()
+    filter: str = ""
+    bg: str = ""
+    size: str = ""
+    position: str = ""
+
+    @classmethod
+    def parse(cls, raw: dict | None) -> "Art | None":
+        if not raw or not raw.get("url"):
+            return None
+        return cls(
+            url=raw["url"],
+            recolor=tuple((raw.get("recolor") or {}).items()),
+            filter=raw.get("filter", ""),
+            bg=raw.get("bg", ""),
+            size=raw.get("size", ""),
+            position=raw.get("position", ""),
+        )
+
+    @property
+    def key(self) -> str:
+        """Cache key and URL version: same source and recolouring means the same file."""
+        return hashlib.sha1(repr((self.url, self.recolor)).encode()).hexdigest()[:12]
+
+    def style(self) -> dict:
+        extra = (("filter", self.filter), ("bg", self.bg), ("size", self.size), ("position", self.position))
+        return {"v": self.key, **{k: v for k, v in extra if v}}
 
 
 @dataclass(frozen=True)
@@ -47,8 +89,12 @@ class Service:
     id: str
     name: str
     url: str
-    icon: str = ""
-    color: str = "#333"
+    glyph: str = ""
+    tagline: str = ""
+    color: str = "#7c5cff"
+    tile: str = ""
+    logo: Art | None = None
+    icon: Art | None = None
     match: tuple[str, ...] = ()
     keys: dict[str, str] = field(default_factory=dict)
     user_agent: str | None = None
@@ -56,8 +102,16 @@ class Service:
     def media_key(self, action: str) -> str:
         return self.keys.get(action) or DEFAULT_MEDIA_KEYS[action]
 
+    def art(self, kind: str) -> Art | None:
+        return {"logo": self.logo, "icon": self.icon}.get(kind)
+
     def public(self) -> dict:
-        return {"id": self.id, "name": self.name, "icon": self.icon, "color": self.color}
+        return {
+            "id": self.id, "name": self.name, "glyph": self.glyph or self.name[:1],
+            "tagline": self.tagline, "color": self.color, "tile": self.tile or self.color,
+            "logo": self.logo.style() if self.logo else None,
+            "icon": self.icon.style() if self.icon else None,
+        }
 
 
 def load_services(path: Path) -> list[Service]:
@@ -75,8 +129,12 @@ def load_services(path: Path) -> list[Service]:
                 id=sid,
                 name=item["name"],
                 url=item["url"],
-                icon=item.get("icon", ""),
-                color=item.get("color", "#333"),
+                glyph=item.get("glyph", ""),
+                tagline=item.get("tagline", ""),
+                color=item.get("color", "#7c5cff"),
+                tile=item.get("tile", ""),
+                logo=Art.parse(item.get("logo")),
+                icon=Art.parse(item.get("icon")),
                 match=tuple(m.lower() for m in match),
                 keys=dict(item.get("keys", {})),
                 user_agent=item.get("user_agent"),

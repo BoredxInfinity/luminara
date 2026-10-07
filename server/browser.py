@@ -19,7 +19,8 @@ from .config import DEFAULT_MEDIA_KEYS, ROOT, Service, Settings, service_for_url
 
 log = logging.getLogger("tvbox.browser")
 
-CURSOR_JS = (ROOT / "web" / "inject" / "cursor.js").read_text(encoding="utf-8")
+# Injected into every page: draws the remote's cursor and on-screen messages (volume, toasts).
+OVERLAY_JS = (ROOT / "web" / "inject" / "overlay.js").read_text(encoding="utf-8")
 
 # name -> (key, code, windowsVirtualKeyCode, text)
 KEYS: dict[str, tuple[str, str, int, str]] = {
@@ -243,8 +244,8 @@ class Browser:
         # Without this, an unfocused window drops synthetic mouse presses (and some
         # players pause on blur). Under cage the window is focused anyway; this is cheap.
         await self.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
-        await self.send("Page.addScriptToEvaluateOnNewDocument", {"source": CURSOR_JS})
-        await self.send("Runtime.evaluate", {"expression": CURSOR_JS})
+        await self.send("Page.addScriptToEvaluateOnNewDocument", {"source": OVERLAY_JS})
+        await self.send("Runtime.evaluate", {"expression": OVERLAY_JS})
         await self._refresh_viewport()
         self._update(cdp=True, **self._describe(target["url"], target.get("title", "")))
         await self._apply_user_agent(service_for_url(self.services, target["url"]))
@@ -360,6 +361,10 @@ class Browser:
         await self.send("Input.dispatchKeyEvent", down)
         await self.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": key, "code": code,
                                                    "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+
+    async def osd(self, message: dict) -> None:
+        expr = f"window.__tvbox && window.__tvbox.osd({json.dumps(message)})"
+        await self.send("Runtime.evaluate", {"expression": expr}, timeout=3)
 
     async def type_text(self, text: str, enter: bool = False) -> None:
         if text:

@@ -2,34 +2,54 @@
   {
     "id": "netflix",
     "name": "Netflix",
+    "tagline": "Films, series and anime",
     "url": "https://www.netflix.com/browse",
-    "icon": "N",
-    "color": "#b20710",
-    "match": ["netflix.com"]
+    "match": ["netflix.com"],
+    "glyph": "N",
+    "color": "#e50914",
+    "tile": "radial-gradient(120% 140% at 50% 0%, #2a0a0c 0%, #000 70%)",
+    "logo": {"url": "https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_logo.svg"},
+    "icon": {"url": "https://upload.wikimedia.org/wikipedia/commons/7/75/Netflix_icon.svg", "bg": "#000"}
   },
   {
     "id": "prime",
     "name": "Prime Video",
+    "tagline": "Amazon Originals, films and live sport",
     "url": "https://www.primevideo.com/",
-    "icon": "P",
-    "color": "#1a98ff",
-    "match": ["primevideo.com", "amazon.com", "amazon.in"]
+    "match": ["primevideo.com", "amazon.com", "amazon.in"],
+    "glyph": "P",
+    "color": "#00a8e1",
+    "tile": "radial-gradient(120% 140% at 50% 0%, #1b3a52 0%, #0f171e 70%)",
+    "logo": {"url": "https://upload.wikimedia.org/wikipedia/commons/1/11/Amazon_Prime_Video_logo.svg",
+             "recolor": {"#232F3E": "#ffffff"}},
+    "icon": {"url": "https://upload.wikimedia.org/wikipedia/commons/c/ca/Amazon_Prime_Video_logo_%282024%29.svg", "bg": "#1a98ff"}
   },
   {
     "id": "jiohotstar",
     "name": "JioHotstar",
+    "tagline": "Cricket, Indian originals and Disney",
     "url": "https://www.hotstar.com/in/home",
-    "icon": "J",
-    "color": "#0c1a4b",
-    "match": ["hotstar.com", "jiohotstar.com"]
+    "match": ["hotstar.com", "jiohotstar.com"],
+    "glyph": "J",
+    "color": "#8b3dff",
+    "tile": "linear-gradient(135deg, #1c2bd9 0%, #7a1fd1 55%, #d4148a 100%)",
+    "logo": {"url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/JioHotstar_2025.png/960px-JioHotstar_2025.png", "filter": "white"},
+    "icon": {"url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/5a/e4/f2/5ae4f2b9-83f1-6760-14a1-5f7d50a50eed/AppIcon-IN-0-0-1x_U007epad-0-1-0-85-220.png/256x256bb.png",
+             "bg": "linear-gradient(135deg, #2b5cff 0%, #8a2be2 55%, #e6158e 100%)"}
   },
   {
     "id": "youtube",
     "name": "YouTube",
+    "tagline": "Videos, music and creators",
     "url": "https://www.youtube.com/tv",
-    "icon": "▶",
-    "color": "#cc0000",
     "match": ["youtube.com"],
+    "glyph": "▶",
+    "color": "#ff0033",
+    "tile": "radial-gradient(120% 140% at 50% 0%, #2b2b2b 0%, #0f0f0f 70%)",
+    "logo": {"url": "https://upload.wikimedia.org/wikipedia/commons/b/b8/YouTube_Logo_2017.svg",
+             "recolor": {"rgb(40, 40, 40)": "#ffffff"}},
+    "icon": {"url": "https://upload.wikimedia.org/wikipedia/commons/0/09/YouTube_full-color_icon_%282017%29.svg",
+             "bg": "#fff", "size": "70%"},
     "user_agent": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.0 TV Safari/537.36",
     "keys": {"playpause": "mediaplaypause", "back": "escape"}
   }

@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest>=8
 watchfiles>=1.0
+certifi  # CA bundle for python.org builds on macOS (the Pi uses the system store)

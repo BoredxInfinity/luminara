@@ -1,12 +1,14 @@
-// Phone/laptop remote. Buttons use the HTTP API; trackpad motion goes over the
+// Phone/laptop remote. Buttons use the HTTP API; touchpad motion goes over the
 // WebSocket, batched to one message per animation frame.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const BRAND = "#7c5cff";
 let services = [];
 let state = {};
 let ws = null;
 let paired = true;
+let launching = null;
 
 // ---- HTTP ------------------------------------------------------------------
 
@@ -19,7 +21,7 @@ async function api(path, body) {
     if (res.status === 401) return needPairing();
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      toast(err.error || (res.status === 503 ? "TV browser isn't ready" : `Error ${res.status}`));
+      toast(err.error || (res.status === 503 ? "The TV browser isn't ready yet" : `Error ${res.status}`));
     }
     return res;
   } catch {
@@ -27,7 +29,7 @@ async function api(path, body) {
   }
 }
 
-function buzz() { navigator.vibrate?.(8); }
+function buzz(ms = 8) { navigator.vibrate?.(ms); }
 
 let toastTimer = 0;
 function toast(text) {
@@ -38,7 +40,32 @@ function toast(text) {
   toastTimer = setTimeout(() => (el.hidden = true), 2500);
 }
 
-const sendKey = (key) => { buzz(); return api("/api/key", { key }); };
+const sendKey = (key) => api("/api/key", { key });
+
+// Press-and-hold repeat for D-pad arrows, seek and volume.
+function repeater(fire, { delay = 420, every = 120 } = {}) {
+  let t1 = 0, t2 = 0;
+  return {
+    start() { this.stop(); t1 = setTimeout(() => { t2 = setInterval(fire, every); }, delay); },
+    stop() { clearTimeout(t1); clearInterval(t2); },
+  };
+}
+
+function holdButton(el, fire) {
+  const rep = repeater(fire);
+  el.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("held");
+    buzz();
+    fire();
+    rep.start();
+  });
+  const end = () => { el.classList.remove("held"); rep.stop(); };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  el.addEventListener("click", (e) => { if (e.detail === 0) fire(); });  // keyboard activation
+}
 
 // ---- pairing ---------------------------------------------------------------
 
@@ -56,6 +83,7 @@ async function pair(pin) {
     paired = true;
     $("pair").hidden = true;
     $("pair-error").textContent = "";
+    buzz(20);
     start();
     return true;
   }
@@ -68,45 +96,103 @@ $("pair-form").addEventListener("submit", (e) => {
   e.preventDefault();
   pair($("pin-input").value);
 });
+$("pin-input").addEventListener("input", (e) => {
+  if (/^\d{4}$/.test(e.target.value)) pair(e.target.value);  // no need to tap Pair
+});
+
+// ---- artwork -----------------------------------------------------------------
+
+// Paint a service's app icon onto an element, or its glyph if the icon isn't available.
+// icon.bg may be a colour or a gradient; the icon image is layered on top of it.
+function paintIcon(el, s) {
+  const bg = s.icon?.bg || s.color;
+  const gradient = bg.includes("gradient(");
+  el.style.cssText = "";
+  el.style.backgroundColor = gradient ? "" : bg;
+  el.style.backgroundImage = gradient ? bg : "";
+  el.textContent = s.glyph;
+  if (!s.icon) return;
+  const url = `/logos/${encodeURIComponent(s.id)}/icon?v=${s.icon.v}`;
+  const img = new Image();
+  img.onload = () => {
+    el.textContent = "";
+    el.style.backgroundImage = `url("${url}")${gradient ? `, ${bg}` : ""}`;
+    el.style.backgroundSize = `${s.icon.size || "cover"}${gradient ? ", cover" : ""}`;
+    el.style.backgroundPosition = `${s.icon.position || "center"}${gradient ? ", center" : ""}`;
+  };
+  img.src = url;
+}
 
 // ---- services & state ------------------------------------------------------
 
 function renderServices() {
-  $("services").replaceChildren(...services.map((s, i) => {
+  $("apps").replaceChildren(...services.map((s, i) => {
     const b = document.createElement("button");
-    b.className = "service";
-    b.style.setProperty("--tile", s.color);
+    b.className = "app";
+    b.style.setProperty("--c", s.color);
     b.dataset.index = i;
-    b.innerHTML = `<span class="icon"></span><span class="name"></span>`;
-    b.querySelector(".icon").textContent = s.icon || s.name[0];
-    b.querySelector(".name").textContent = s.name;
-    b.addEventListener("click", () => { buzz(); api(`/api/launch/${encodeURIComponent(s.id)}`); });
+    const icon = document.createElement("span");
+    icon.className = "app-icon";
+    paintIcon(icon, s);
+    const name = document.createElement("span");
+    name.textContent = s.name;
+    b.append(icon, name);
+    b.addEventListener("click", () => {
+      buzz(12);
+      launching = s.id;
+      paintState();
+      api(`/api/launch/${encodeURIComponent(s.id)}`).finally(() => setTimeout(() => { launching = null; paintState(); }, 4000));
+    });
     return b;
   }));
   paintState();
 }
 
+let lastIconFor = null;
 function paintState() {
-  $("conn").classList.toggle("on", Boolean(ws && ws.readyState === WebSocket.OPEN && state.cdp));
+  const online = ws && ws.readyState === WebSocket.OPEN;
+  $("conn").className = `conn ${online && state.cdp ? "on" : online ? "half" : ""}`;
   const svc = services.find((s) => s.id === state.service_id);
-  const views = { launcher: "Home screen", service: svc ? svc.name : "Streaming", web: "Web page", offline: "TV browser offline" };
-  $("now-view").textContent = views[state.view] || "Connecting…";
-  $("now-title").textContent = state.view === "launcher" ? "" : (state.title || "");
-  for (const b of $("services").children) {
+  const views = { launcher: "Home screen", service: "Now on TV", web: "Web page", offline: "TV browser starting" };
+  $("now-view").querySelector("span").textContent = online ? (views[state.view] || "Connecting…") : "Reconnecting…";
+  $("now-title").textContent =
+    state.view === "launcher" ? "Luminara" : svc ? (state.title && state.title !== svc.name ? `${svc.name} · ${state.title}` : svc.name) : (state.title || "Luminara");
+
+  // Theme the whole remote in the colour of what's on screen.
+  document.documentElement.style.setProperty("--accent", svc ? svc.color : BRAND);
+  document.querySelector('meta[name="theme-color"]').content = "#0b0d13";
+
+  const iconKey = svc ? svc.id : "home";
+  if (iconKey !== lastIconFor) {
+    const icon = $("now-icon");
+    if (svc) { icon.classList.remove("mark"); paintIcon(icon, svc); }
+    else { icon.className = "now-icon mark"; icon.style.cssText = ""; icon.textContent = ""; }
+    lastIconFor = iconKey;
+  }
+
+  for (const b of $("apps").children) {
     const s = services[Number(b.dataset.index)];
     b.classList.toggle("active", state.view === "service" && s.id === state.service_id);
     b.classList.toggle("selected", state.view === "launcher" && Number(b.dataset.index) === state.selected);
+    b.classList.toggle("launching", launching === s.id && state.service_id !== s.id);
   }
-  const vol = $("vol-level");
-  vol.classList.toggle("muted", Boolean(state.muted));
-  vol.textContent = state.volume == null ? "Vol –" : state.muted ? "Muted" : `Vol ${state.volume}%`;
+
+  const meter = $("vol-meter");
+  const known = state.volume != null;
+  meter.classList.toggle("muted", Boolean(state.muted));
+  meter.querySelector(".meter-fill").style.width = known ? `${state.muted ? 100 : state.volume}%` : "0";
+  meter.querySelector("b").textContent = !known ? "–" : state.muted ? "Muted" : `${state.volume}%`;
 }
 
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
-    if (msg.t === "state") { state = msg; paintState(); }
+    if (msg.t === "state") {
+      if (launching && msg.service_id === launching) launching = null;
+      state = msg;
+      paintState();
+    }
   };
   ws.onopen = paintState;
   ws.onclose = () => {
@@ -119,31 +205,32 @@ function connect() {
 
 document.addEventListener("click", (e) => {
   const keyBtn = e.target.closest("[data-key]");
-  if (keyBtn) return sendKey(keyBtn.dataset.key);
-  const volBtn = e.target.closest("[data-vol]");
-  if (volBtn) { buzz(); api("/api/volume", { action: volBtn.dataset.vol }); }
+  if (keyBtn) { buzz(); sendKey(keyBtn.dataset.key); }
 });
-
-$("home-btn").addEventListener("click", () => { buzz(); api("/api/home"); });
+for (const el of document.querySelectorAll("[data-hold-key]")) holdButton(el, () => sendKey(el.dataset.holdKey));
+for (const el of document.querySelectorAll("[data-hold-vol]")) holdButton(el, () => api("/api/volume", { action: el.dataset.holdVol }));
+$("vol-meter").addEventListener("click", () => { buzz(); api("/api/volume", { action: "mute" }); });
+$("home-btn").addEventListener("click", () => { buzz(12); api("/api/home"); });
 
 // Tabs
-const tabs = document.querySelectorAll("[role=tab]");
+const tabs = [...document.querySelectorAll("[role=tab]")];
 function showTab(name) {
-  for (const t of tabs) {
+  tabs.forEach((t, i) => {
     const on = t.dataset.tab === name;
     t.setAttribute("aria-selected", String(on));
     $(`tab-${t.dataset.tab}`).hidden = !on;
-  }
+    if (on) document.querySelector(".tab-ink").style.transform = `translateX(${i * 100}%)`;
+  });
   try { localStorage.setItem("tvbox-tab", name); } catch { /* storage unavailable */ }
 }
-for (const t of tabs) t.addEventListener("click", () => showTab(t.dataset.tab));
+for (const t of tabs) t.addEventListener("click", () => { buzz(); showTab(t.dataset.tab); });
 
 // Text
 $("text-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("text-input");
   const res = await api("/api/text", { text: input.value, enter: $("text-enter").checked });
-  if (res && res.ok) { input.value = ""; toast("Sent"); }
+  if (res && res.ok) { input.value = ""; toast("Sent to the TV"); }
 });
 
 // Power
@@ -162,7 +249,51 @@ addEventListener("keydown", (e) => {
   if (key) { e.preventDefault(); sendKey(key); }
 });
 
-// ---- trackpad --------------------------------------------------------------
+// ---- D-pad: tap a zone, swipe anywhere on it, or hold an arrow ------------------
+
+const dpad = $("dpad");
+const SWIPE_PX = 26;
+let touch = null;  // { x, y, zone, swiped }
+const arrowRepeat = repeater(() => touch && sendKey(touch.zone), { delay: 450, every: 110 });
+
+function zoneAt(e) {
+  const r = dpad.getBoundingClientRect();
+  const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+  if (Math.hypot(dx, dy) < r.width * 0.19) return "enter";
+  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+}
+function light(zone) {
+  for (const z of dpad.querySelectorAll(".zone")) z.classList.toggle("hit", z.dataset.zone === zone);
+}
+
+dpad.addEventListener("pointerdown", (e) => {
+  dpad.setPointerCapture(e.pointerId);
+  touch = { x: e.clientX, y: e.clientY, zone: zoneAt(e), swiped: false };
+  light(touch.zone);
+  if (touch.zone !== "enter") arrowRepeat.start();
+});
+dpad.addEventListener("pointermove", (e) => {
+  if (!touch || touch.swiped) return;
+  const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
+  if (Math.hypot(dx, dy) < SWIPE_PX) return;
+  arrowRepeat.stop();
+  touch.swiped = true;
+  touch.zone = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+  light(touch.zone);
+  buzz();
+  sendKey(touch.zone);
+});
+function dpadEnd() {
+  if (!touch) return;
+  arrowRepeat.stop();
+  if (!touch.swiped) { buzz(); sendKey(touch.zone); }
+  touch = null;
+  setTimeout(() => light(null), 120);
+}
+dpad.addEventListener("pointerup", dpadEnd);
+dpad.addEventListener("pointercancel", () => { arrowRepeat.stop(); touch = null; light(null); });
+
+// ---- touchpad --------------------------------------------------------------
 
 const pad = $("trackpad");
 const pointers = new Map();          // pointerId -> {x, y}

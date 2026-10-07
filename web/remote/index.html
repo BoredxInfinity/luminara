@@ -3,25 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0e1117">
+  <meta name="theme-color" content="#0b0d13">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Luminara">
   <title>Luminara Remote</title>
+  <link rel="icon" href="/remote/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/remote/manifest.webmanifest">
   <link rel="stylesheet" href="/remote/remote.css">
 </head>
 <body>
-  <header class="bar">
-    <span id="conn" class="conn" title="Disconnected"></span>
-    <div class="now">
-      <span id="now-view" class="now-view">Connecting…</span>
-      <span id="now-title" class="now-title"></span>
+  <header class="now">
+    <div id="now-icon" class="now-icon mark" aria-hidden="true"></div>
+    <div class="now-text">
+      <span id="now-view" class="now-view"><i id="conn" class="conn"></i><span>Connecting…</span></span>
+      <span id="now-title" class="now-title">Luminara</span>
     </div>
     <button id="power-btn" class="icon-btn" aria-label="Power">
       <svg viewBox="0 0 24 24"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
     </button>
   </header>
 
-  <nav id="services" class="services" aria-label="Services"></nav>
+  <nav id="apps" class="apps" aria-label="Services"></nav>
 
   <div class="quick">
     <button data-key="back" class="pill">
@@ -33,23 +37,27 @@
   </div>
 
   <div class="tabs" role="tablist">
+    <span class="tab-ink" aria-hidden="true"></span>
     <button role="tab" data-tab="pad" aria-selected="true">Remote</button>
-    <button role="tab" data-tab="track" aria-selected="false">Trackpad</button>
+    <button role="tab" data-tab="track" aria-selected="false">Touchpad</button>
     <button role="tab" data-tab="keys" aria-selected="false">Keyboard</button>
   </div>
 
   <main>
     <section id="tab-pad" class="panel" role="tabpanel">
-      <div class="dpad">
-        <button data-key="up" class="d up" aria-label="Up"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
-        <button data-key="left" class="d left" aria-label="Left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
-        <button data-key="enter" class="d ok">OK</button>
-        <button data-key="right" class="d right" aria-label="Right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
-        <button data-key="down" class="d down" aria-label="Down"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+      <div id="dpad" class="dpad" role="group" aria-label="Direction pad: tap or swipe">
+        <span class="zone up" data-zone="up"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></span>
+        <span class="zone left" data-zone="left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></span>
+        <span class="zone right" data-zone="right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+        <span class="zone down" data-zone="down"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+        <span class="zone ok" data-zone="enter">OK</span>
       </div>
+      <p class="hint">Tap or swipe · hold to repeat</p>
       <div class="row">
         <button data-key="escape" class="pill small">Esc</button>
-        <button data-key="f" class="pill small">Fullscreen</button>
+        <button data-key="f" class="pill small">
+          <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>Fullscreen
+        </button>
       </div>
     </section>
 
@@ -62,9 +70,9 @@
 
     <section id="tab-keys" class="panel" role="tabpanel" hidden>
       <form id="text-form" class="text-form" autocomplete="off">
-        <input id="text-input" type="text" placeholder="Type to send to the TV" maxlength="500"
+        <input id="text-input" type="text" placeholder="Search or type on the TV" maxlength="500"
                autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
-        <button type="submit" class="pill">Send</button>
+        <button type="submit" class="pill accent">Send</button>
       </form>
       <label class="check"><input id="text-enter" type="checkbox" checked> Press Enter after sending</label>
       <div class="row">
@@ -75,26 +83,30 @@
     </section>
   </main>
 
-  <footer class="media">
-    <div class="row">
-      <button data-key="seek_back" class="round" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 7l-6 5 6 5zM19 7l-6 5 6 5z"/></svg></button>
-      <button data-key="playpause" class="round big" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path d="M7 5l7 7-7 7zM16 6v12M19.5 6v12"/></svg></button>
-      <button data-key="seek_fwd" class="round" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="M5 7l6 5-6 5zM13 7l6 5-6 5z"/></svg></button>
+  <footer class="transport">
+    <div class="row media">
+      <button data-hold-key="seek_back" class="round" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 7l-6 5 6 5zM19 7l-6 5 6 5z"/></svg></button>
+      <button data-key="playpause" class="round play" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path d="M7 5l7 7-7 7zM16 6v12M19.5 6v12"/></svg></button>
+      <button data-hold-key="seek_fwd" class="round" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="M5 7l6 5-6 5zM13 7l6 5-6 5z"/></svg></button>
     </div>
     <div class="row volume">
-      <button data-vol="down" class="round" aria-label="Volume down"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-      <button data-vol="mute" id="vol-level" class="vol-level" aria-label="Mute">Vol –</button>
-      <button data-vol="up" class="round" aria-label="Volume up"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
+      <button data-hold-vol="down" class="round small" aria-label="Volume down"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      <button id="vol-meter" class="meter" aria-label="Mute">
+        <span class="meter-fill"></span>
+        <span class="meter-label"><svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg><b>–</b></span>
+      </button>
+      <button data-hold-vol="up" class="round small" aria-label="Volume up"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
     </div>
   </footer>
 
   <div id="pair" class="overlay" hidden>
     <form id="pair-form" class="card">
-      <h2>Pair this remote</h2>
-      <p>Enter the 4-digit PIN shown on the TV.</p>
-      <input id="pin-input" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" required>
+      <div class="mark big" aria-hidden="true"></div>
+      <h2>Pair with your TV</h2>
+      <p>Enter the 4-digit PIN shown on the TV screen.</p>
+      <input id="pin-input" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" required aria-label="PIN">
       <p id="pair-error" class="error" role="alert"></p>
-      <button type="submit" class="pill wide">Pair</button>
+      <button type="submit" class="pill wide accent">Pair</button>
     </form>
   </div>
 

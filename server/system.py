@@ -64,6 +64,13 @@ class System:
                 await _run("wpctl", "set-volume", "-l", "1.0", SINK, STEP + ("+" if action == "up" else "-"))
         return await self.volume()
 
+    async def set_level(self, percent: int) -> dict:
+        """Set an absolute volume and unmute. Raises RuntimeError if PipeWire isn't up yet."""
+        if self.has_audio:
+            await _run("wpctl", "set-volume", SINK, f"{percent / 100:.2f}")
+            await _run("wpctl", "set-mute", SINK, "0")
+        return await self.volume()
+
     async def power(self, action: str) -> None:
         if action not in ("reboot", "poweroff"):
             raise ValueError(action)

@@ -6,15 +6,21 @@ import asyncio
 import io
 import json
 import logging
+import os
 import socket
+import ssl
+import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
+import aiohttp
 import segno
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from .auth import COOKIE, Auth, Locked
 from .browser import KEYS, MEDIA_ACTIONS, Browser, CDPError
 from .config import WEB_DIR, Settings, load_services, load_settings
+from .logos import Logos
 from .system import System
 
 log = logging.getLogger("tvbox")
@@ -33,20 +39,92 @@ class Hub:
         self.services = load_services(settings.services_file)
         self.auth = Auth(settings.data_dir) if settings.pin_enabled else None
         self.system = System()
-        self.browser = Browser(settings, self.services, self.broadcast)
-        self.clients: set[web.WebSocketResponse] = set()
-        self.selected = 0
+        self.logos = Logos(settings.data_dir, self.services)
+        self.browser = Browser(settings, self.services, self.on_browser_change)
+        self.clients: dict[web.WebSocketResponse, str] = {}  # socket -> "tv" | "remote"
         self.volume = {"volume": None, "muted": False}
+        self.http: aiohttp.ClientSession | None = None
+        self.jobs: list[asyncio.Task] = []
+        self._recent_file = settings.data_dir / "recent.json"
+        self.recent: dict[str, int] = self._load_recent()  # service id -> last opened (epoch s)
+        self.selected = self._index(max(self.recent, key=self.recent.get, default=None))
+        self._service_on_screen: str | None = None
         self._qr: tuple[str, str] | None = None  # (url, svg)
 
+    # ---- state ----------------------------------------------------------
+
+    def remote_count(self) -> int:
+        return sum(1 for role in self.clients.values() if role == "remote")
+
     def snapshot(self) -> dict:
-        return {**self.browser.state, "selected": self.selected, **self.volume}
+        return {**self.browser.state, "selected": self.selected, **self.volume,
+                "remotes": self.remote_count(), "recent": self.recent}
 
     async def broadcast(self) -> None:
         if not self.clients:
             return
         payload = json.dumps({"t": "state", **self.snapshot()})
         await asyncio.gather(*(ws.send_str(payload) for ws in list(self.clients)), return_exceptions=True)
+
+    async def send_to(self, role: str, message: dict) -> None:
+        payload = json.dumps(message)
+        targets = [ws for ws, r in self.clients.items() if r == role]
+        await asyncio.gather(*(ws.send_str(payload) for ws in targets), return_exceptions=True)
+
+    async def on_browser_change(self) -> None:
+        sid = self.browser.state.get("service_id")
+        if sid and sid != self._service_on_screen:
+            # Remember what was opened, and focus its tile when we come back home.
+            self.recent[sid] = int(time.time())
+            self.selected = self._index(sid)
+            self._save_recent()
+        self._service_on_screen = sid
+        await self.broadcast()
+
+    def osd(self, **message) -> None:
+        """Show a message over whatever is on the TV (web/inject/overlay.js)."""
+        if self.browser.state.get("cdp"):
+            self.browser.spawn(self.browser.osd(message))
+
+    def _index(self, sid: str | None) -> int:
+        return next((i for i, s in enumerate(self.services) if s.id == sid), 0)
+
+    def _load_recent(self) -> dict[str, int]:
+        try:
+            data = json.loads(self._recent_file.read_text())
+            return {k: int(v) for k, v in data.items() if any(s.id == k for s in self.services)}
+        except (FileNotFoundError, ValueError, AttributeError):
+            return {}
+
+    def _save_recent(self) -> None:
+        tmp = self._recent_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.recent))
+        tmp.replace(self._recent_file)
+
+    # ---- startup jobs ---------------------------------------------------
+
+    async def apply_boot_volume(self) -> None:
+        """Set the boot volume once per boot (marker lives in tmpfs), not on every restart."""
+        level = self.settings.boot_volume
+        if not level or not self.system.has_audio:
+            return
+        marker = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "tvbox-boot-volume"
+        if marker.exists():
+            return
+        await asyncio.sleep(3)  # let WirePlumber settle on the HDMI output first
+        for _ in range(30):
+            try:
+                self.volume = await self.system.set_level(level)
+            except RuntimeError:
+                await asyncio.sleep(2)  # PipeWire not up yet
+                continue
+            marker.touch()
+            log.info("boot volume set to %d%%", level)
+            await self.broadcast()
+            return
+        log.warning("couldn't set boot volume: PipeWire never came up")
+
+    # ---- pairing --------------------------------------------------------
 
     def remote_url(self) -> str:
         return f"http://{lan_ip()}:{self.settings.port}/remote"
@@ -147,6 +225,16 @@ async def qr(request: web.Request):
     return web.Response(text=request.app[HUB].qr_svg(), content_type="image/svg+xml")
 
 
+@routes.get("/logos/{id}/{kind}")
+async def logo(request: web.Request):
+    hub = request.app[HUB]
+    found = await hub.logos.get(request.match_info["id"], request.match_info["kind"], hub.http)
+    if not found:
+        raise web.HTTPNotFound()
+    path, ctype = found
+    return web.FileResponse(path, headers={"Content-Type": ctype, "Cache-Control": "max-age=86400"})
+
+
 # ---- API --------------------------------------------------------------------
 
 @routes.get("/api/info")
@@ -171,6 +259,10 @@ async def launch(request: web.Request):
     svc = next((s for s in hub.services if s.id == sid), None)
     if not svc:
         raise web.HTTPNotFound(text=f"unknown service {sid!r}")
+    if hub.browser.state.get("view") == "launcher":
+        # Let the launcher play its opening animation before the page changes.
+        await hub.send_to("tv", {"t": "launch", "id": sid})
+        await asyncio.sleep(0.45)
     await hub.browser.launch(svc)
     return ok()
 
@@ -210,6 +302,7 @@ async def volume(request: web.Request):
         raise web.HTTPBadRequest(text="action must be up, down or mute")
     except RuntimeError as exc:
         return fail(str(exc), 500)
+    hub.osd(kind="volume", **hub.volume)
     await hub.broadcast()
     return ok(**hub.volume)
 
@@ -253,9 +346,14 @@ async def pair(request: web.Request):
 async def ws_handler(request: web.Request):
     hub = request.app[HUB]
     browser = hub.browser
+    role = "tv" if request.query.get("role") == "tv" else "remote"
     ws = web.WebSocketResponse(heartbeat=30, max_msg_size=4096)
     await ws.prepare(request)
-    hub.clients.add(ws)
+    hub.clients[ws] = role
+    if role == "remote":
+        if hub.remote_count() == 1:
+            hub.osd(kind="toast", icon="phone", text="Remote connected")
+        await hub.broadcast()  # everyone sees the new remote count
     try:
         if hub.system.has_audio and hub.volume["volume"] is None:  # PipeWire may have been late
             hub.volume = await hub.system.volume()
@@ -273,12 +371,14 @@ async def ws_handler(request: web.Request):
                 elif kind == "scroll":
                     browser.spawn(browser.scroll(_clamp(data["dy"])))
                 elif kind == "select":
-                    hub.selected = int(data["index"])
+                    hub.selected = max(0, min(len(hub.services) - 1, int(data["index"])))
                     await hub.broadcast()
             except (ValueError, KeyError, TypeError, AttributeError):
                 log.debug("ignoring bad ws message: %.80s", msg.data)
     finally:
-        hub.clients.discard(ws)
+        hub.clients.pop(ws, None)
+        if role == "remote":
+            await hub.broadcast()
     return ws
 
 
@@ -296,8 +396,19 @@ async def _no_stale_assets(request: web.Request, response: web.StreamResponse) -
 
 async def _startup(app: web.Application) -> None:
     hub = app[HUB]
+    hub.http = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_ssl_context()))
     hub.volume = await hub.system.volume()
     hub.browser.start()
+    hub.jobs = [asyncio.create_task(hub.apply_boot_volume()), asyncio.create_task(hub.logos.prefetch(hub.http))]
+
+
+def _ssl_context() -> ssl.SSLContext:
+    # python.org builds on macOS ship without root certificates; certifi is a dev dependency.
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 
 async def _shutdown(app: web.Application) -> None:
@@ -307,7 +418,11 @@ async def _shutdown(app: web.Application) -> None:
 
 
 async def _cleanup(app: web.Application) -> None:
+    for job in app[HUB].jobs:
+        job.cancel()
+    await asyncio.gather(*app[HUB].jobs, return_exceptions=True)
     await app[HUB].browser.stop()
+    await app[HUB].http.close()
 
 
 def create_app(settings: Settings | None = None) -> web.Application:

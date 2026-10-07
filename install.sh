@@ -42,7 +42,7 @@ apt-get install -y chromium || apt-get install -y chromium-browser
 say "Python environment ($APP_DIR/.venv)"
 [[ -x "$APP_DIR/.venv/bin/python" ]] || as_user python3 -m venv "$APP_DIR/.venv"
 as_user "$APP_DIR/.venv/bin/pip" install --quiet --disable-pip-version-check -r "$APP_DIR/requirements.txt"
-chmod +x "$APP_DIR/install.sh" "$APP_DIR/update.sh" "$APP_DIR/deploy/kiosk.sh"
+chmod +x "$APP_DIR/install.sh" "$APP_DIR/update.sh" "$APP_DIR/deploy/kiosk.sh" "$APP_DIR/deploy/kiosk-session.sh"
 
 say "Audio, power and login for $TV_USER"
 # PipeWire runs as a user service; lingering starts it at boot without a login.
@@ -56,6 +56,11 @@ EOF
 chmod 0440 "$SUDOERS.tmp"
 visudo -cf "$SUDOERS.tmp" >/dev/null && mv "$SUDOERS.tmp" "$SUDOERS"
 install -m 0644 "$APP_DIR/deploy/pam-tvbox-kiosk" /etc/pam.d/tvbox-kiosk
+
+say "Chromium policies (no password-save, notification or other prompts)"
+# A link, so edits to deploy/chromium-policy.json apply with ./update.sh.
+mkdir -p /etc/chromium/policies/managed
+ln -sf "$APP_DIR/deploy/chromium-policy.json" /etc/chromium/policies/managed/tvbox.json
 
 say "systemd services"
 for unit in tvbox-server.service tvbox-kiosk.service; do

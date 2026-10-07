@@ -1,0 +1,9 @@
+{
+  "name": "Luminara Remote",
+  "short_name": "Luminara",
+  "start_url": "/remote",
+  "display": "standalone",
+  "background_color": "#0b0d13",
+  "theme_color": "#0b0d13",
+  "icons": [{"src": "/remote/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]
+}

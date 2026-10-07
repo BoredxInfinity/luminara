@@ -62,7 +62,7 @@ apply() {  # $1 = commit we came from, $2 = 1 for --force
   sudo systemctl restart tvbox-server
 
   # The TV page only picks up new launcher files, services or the cursor script on reload.
-  if changed '^(web/|services\.json$|deploy/kiosk\.sh$)'; then
+  if changed '^(web/|services\.json$|deploy/kiosk(-session)?\.sh$|deploy/cursors/|deploy/chromium-policy\.json$)'; then
     say "Restarting the TV display"
     sudo systemctl restart tvbox-kiosk
   fi

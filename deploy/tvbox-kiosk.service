@@ -18,7 +18,7 @@ StandardInput=tty-fail
 UtmpIdentifier=tty1
 UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
-ExecStart=/usr/bin/cage -s -- @APP_DIR@/deploy/kiosk.sh
+ExecStart=@APP_DIR@/deploy/kiosk-session.sh
 Restart=always
 RestartSec=3
 

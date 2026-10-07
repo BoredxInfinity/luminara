@@ -7,22 +7,59 @@
   <link rel="stylesheet" href="/tv/tv.css">
 </head>
 <body>
-  <header>
-    <h1>Luminara</h1>
-    <time id="clock"></time>
+  <div class="ambient" aria-hidden="true"><div class="glow" id="glow-a"></div><div class="glow" id="glow-b"></div></div>
+
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <div>
+        <h1 id="greeting">Welcome</h1>
+        <p id="date" class="muted"></p>
+      </div>
+    </div>
+    <div class="top-right">
+      <span id="remotes" class="chip" hidden>
+        <svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
+        <span></span>
+      </span>
+      <time id="clock"></time>
+    </div>
   </header>
+
   <main>
+    <section class="hero" aria-live="polite">
+      <p id="hero-eyebrow" class="eyebrow"></p>
+      <h2 id="hero-title"></h2>
+      <p id="hero-sub" class="muted"></p>
+    </section>
     <ul id="tiles" class="tiles" role="listbox" aria-label="Services"></ul>
   </main>
-  <aside class="pair">
-    <img id="qr" alt="QR code for the remote" width="168" height="168">
-    <div>
-      <p class="label">Scan with your phone to get the remote</p>
-      <p id="url" class="url"></p>
-      <p id="pin" class="pin" hidden>PIN <strong></strong></p>
+
+  <footer class="bottom">
+    <div class="hints">
+      <span><kbd>◀</kbd><kbd>▶</kbd> Choose</span>
+      <span><kbd>OK</kbd> Open</span>
     </div>
-  </aside>
-  <p id="status" class="status" hidden>Connecting…</p>
+    <aside id="pair" class="pair">
+      <img id="qr" alt="QR code for the remote">
+      <div>
+        <p class="pair-title" id="pair-title">Use your phone as the remote</p>
+        <p class="muted">Scan the code, or open <strong id="url"></strong></p>
+        <p id="pin" class="pin" hidden>PIN <strong></strong></p>
+      </div>
+    </aside>
+  </footer>
+
+  <div id="splash" class="splash" aria-hidden="true">
+    <div class="splash-logo"></div>
+    <p class="splash-note">Opening…</p>
+  </div>
+
+  <div id="saver" class="saver" aria-hidden="true">
+    <div class="saver-clock"><time></time><p></p></div>
+  </div>
+
+  <p id="status" class="status" hidden>Reconnecting…</p>
   <script src="/tv/tv.js"></script>
 </body>
 </html>

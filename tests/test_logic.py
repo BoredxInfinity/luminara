@@ -86,3 +86,44 @@ def test_parse_volume():
     assert parse_volume("Volume: 0.40\n") == (40, False)
     assert parse_volume("Volume: 0.55 [MUTED]\n") == (55, True)
     assert parse_volume("garbage") is None
+
+
+# ---- logos ------------------------------------------------------------------
+
+from server.config import Art  # noqa: E402
+from server.logos import looks_like, recolor_svg  # noqa: E402
+
+
+def test_every_service_has_art_and_public_fields():
+    for svc in SERVICES:
+        pub = svc.public()
+        assert pub["glyph"] and pub["color"].startswith("#") and pub["tile"]
+        assert pub["logo"]["v"] == svc.logo.key and pub["icon"]["v"] == svc.icon.key
+
+
+def test_art_key_changes_with_source_and_recolor():
+    a = Art(url="https://x/logo.svg")
+    assert a.key == Art(url="https://x/logo.svg").key
+    assert a.key != Art(url="https://x/other.svg").key
+    assert a.key != Art(url="https://x/logo.svg", recolor=(("#000", "#fff"),)).key
+
+
+def test_recolor_svg():
+    svg = b'<svg><path style="fill: rgb(40, 40, 40)"/><path fill="#FF0000"/></svg>'
+    out = recolor_svg(svg, (("rgb(40, 40, 40)", "#ffffff"),))
+    assert b"#ffffff" in out and b"#FF0000" in out and b"rgb(40" not in out
+
+
+def test_looks_like_rejects_error_pages_and_truncated_pngs():
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20 + b"IEND\xaeB`\x82"
+    assert looks_like(png, "image/png")
+    assert not looks_like(png[:-4], "image/png")  # cut short
+    assert not looks_like(b"<!DOCTYPE html><html>", "image/png")
+    assert looks_like(b'<?xml version="1.0"?><svg viewBox="0 0 1 1"/>', "image/svg+xml")
+    assert not looks_like(b"<html>Too many requests</html>", "image/svg+xml")
+
+
+def test_boot_volume_setting_is_clamped():
+    assert load_settings({}).boot_volume == 100
+    assert load_settings({"TVBOX_BOOT_VOLUME": "250"}).boot_volume == 100
+    assert load_settings({"TVBOX_BOOT_VOLUME": "0"}).boot_volume == 0
