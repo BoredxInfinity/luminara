@@ -17,10 +17,14 @@ if [ ! -L "$WP_DIR/51-tvbox-hdmi.conf" ]; then
 fi
 
 # Chromium finds a separately installed Widevine (DRM) through a hint file in the
-# profile. The kiosk uses its own profile, so write the hint ourselves.
-if [ -d /opt/WidevineCdm ]; then
+# profile. The kiosk uses its own profile, so point it at the system copy. Once
+# Chromium can play DRM it may download a newer Widevine and repoint the hint; keep
+# that unless the folder it names has gone.
+HINT="$PROFILE/WidevineCdm/latest-component-updated-widevine-cdm"
+CDM_PATH="$(sed -n 's/.*"Path" *: *"\([^"]*\)".*/\1/p' "$HINT" 2>/dev/null || true)"
+if [ -d /opt/WidevineCdm ] && { [ -z "$CDM_PATH" ] || [ ! -d "$CDM_PATH" ]; }; then
   mkdir -p "$PROFILE/WidevineCdm"
-  printf '{"Path":"/opt/WidevineCdm"}' > "$PROFILE/WidevineCdm/latest-component-updated-widevine-cdm"
+  printf '{"Path":"/opt/WidevineCdm"}' > "$HINT"
 fi
 
 for _ in $(seq 1 60); do
