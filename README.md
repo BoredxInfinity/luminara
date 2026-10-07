@@ -79,24 +79,24 @@ sudo apt update && sudo apt full-upgrade -y && sudo apt install -y git
   Mozilla/5.0 (X11; CrOS aarch64 15633.69.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
   ```
 
-**5. Let the Pi read your GitHub repo.** If the repo is public, skip this step. If it's private, give the Pi a read-only deploy key:
+**5. Clone and install:**
 ```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519 -C "tvbox"
-cat ~/.ssh/id_ed25519.pub
-```
-Add the printed key in GitHub under *repo → Settings → Deploy keys → Add* (leave "write access" off). Or, from your laptop:
-```bash
-scp <user>@<hostname>.local:.ssh/id_ed25519.pub pi.pub && gh repo deploy-key add pi.pub --title tvbox && rm pi.pub
-```
-
-**6. Clone and install:**
-```bash
-git clone git@github.com:<you>/luminara.git ~/luminara     # private repo, via the deploy key
-# or: git clone https://github.com/<you>/luminara.git ~/luminara   (public repo)
+git clone https://github.com/BoredxInfinity/luminara.git ~/luminara
 cd ~/luminara
 sudo ./install.sh            # add --1080p if your TV is 4K
 sudo reboot
 ```
+
+If you later make the repo private, give the Pi a read-only deploy key:
+1. On the Pi, run `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519`.
+2. On your laptop, run:
+   ```bash
+   scp <user>@<hostname>.local:.ssh/id_ed25519.pub pi.pub && gh repo deploy-key add pi.pub --title tvbox && rm pi.pub
+   ```
+3. On the Pi, run:
+   ```bash
+   git -C ~/luminara remote set-url origin git@github.com:BoredxInfinity/luminara.git
+   ```
 
 The TV boots straight to the launcher. Scan the QR code with your phone and the remote pairs itself.
 
