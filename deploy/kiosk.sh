@@ -6,6 +6,22 @@ set -eu
 PORT="${TVBOX_PORT:-8080}"
 PROFILE="${HOME}/.config/tvbox-chromium"
 URL="http://127.0.0.1:${PORT}/tv"
+DEPLOY_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Sound to HDMI: link our WirePlumber rule into the user's config (once).
+WP_DIR="${HOME}/.config/wireplumber/wireplumber.conf.d"
+if [ ! -L "$WP_DIR/51-tvbox-hdmi.conf" ]; then
+  mkdir -p "$WP_DIR"
+  ln -sf "$DEPLOY_DIR/wireplumber-hdmi.conf" "$WP_DIR/51-tvbox-hdmi.conf"
+  systemctl --user restart wireplumber || true
+fi
+
+# Chromium finds a separately installed Widevine (DRM) through a hint file in the
+# profile. The kiosk uses its own profile, so write the hint ourselves.
+if [ -d /opt/WidevineCdm ]; then
+  mkdir -p "$PROFILE/WidevineCdm"
+  printf '{"Path":"/opt/WidevineCdm"}' > "$PROFILE/WidevineCdm/latest-component-updated-widevine-cdm"
+fi
 
 for _ in $(seq 1 60); do
   curl -fsS -o /dev/null "http://127.0.0.1:${PORT}/healthz" && break

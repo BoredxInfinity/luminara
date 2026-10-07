@@ -51,6 +51,11 @@ if changed '^requirements\.txt$'; then
   .venv/bin/pip install --quiet --disable-pip-version-check -r requirements.txt
 fi
 
+if changed '^deploy/wireplumber-'; then
+  say "Reloading audio rules"
+  systemctl --user restart wireplumber || true
+fi
+
 say "Restarting the controller"
 sudo systemctl restart tvbox-server
 
