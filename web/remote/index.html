@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0e1117">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Luminara Remote</title>
+  <link rel="stylesheet" href="/remote/remote.css">
+</head>
+<body>
+  <header class="bar">
+    <span id="conn" class="conn" title="Disconnected"></span>
+    <div class="now">
+      <span id="now-view" class="now-view">Connecting…</span>
+      <span id="now-title" class="now-title"></span>
+    </div>
+    <button id="power-btn" class="icon-btn" aria-label="Power">
+      <svg viewBox="0 0 24 24"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+    </button>
+  </header>
+
+  <nav id="services" class="services" aria-label="Services"></nav>
+
+  <div class="quick">
+    <button data-key="back" class="pill">
+      <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>Back
+    </button>
+    <button id="home-btn" class="pill">
+      <svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>Home
+    </button>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="pad" aria-selected="true">Remote</button>
+    <button role="tab" data-tab="track" aria-selected="false">Trackpad</button>
+    <button role="tab" data-tab="keys" aria-selected="false">Keyboard</button>
+  </div>
+
+  <main>
+    <section id="tab-pad" class="panel" role="tabpanel">
+      <div class="dpad">
+        <button data-key="up" class="d up" aria-label="Up"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+        <button data-key="left" class="d left" aria-label="Left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button data-key="enter" class="d ok">OK</button>
+        <button data-key="right" class="d right" aria-label="Right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button data-key="down" class="d down" aria-label="Down"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+      </div>
+      <div class="row">
+        <button data-key="escape" class="pill small">Esc</button>
+        <button data-key="f" class="pill small">Fullscreen</button>
+      </div>
+    </section>
+
+    <section id="tab-track" class="panel" role="tabpanel" hidden>
+      <div id="trackpad" class="trackpad">
+        <span>Drag to move · tap to click<br>two fingers to scroll</span>
+      </div>
+      <button id="click-btn" class="pill wide">Click</button>
+    </section>
+
+    <section id="tab-keys" class="panel" role="tabpanel" hidden>
+      <form id="text-form" class="text-form" autocomplete="off">
+        <input id="text-input" type="text" placeholder="Type to send to the TV" maxlength="500"
+               autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+        <button type="submit" class="pill">Send</button>
+      </form>
+      <label class="check"><input id="text-enter" type="checkbox" checked> Press Enter after sending</label>
+      <div class="row">
+        <button data-key="backspace" class="pill small">⌫ Delete</button>
+        <button data-key="tab" class="pill small">Tab ⇥</button>
+        <button data-key="enter" class="pill small">Enter ↵</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="media">
+    <div class="row">
+      <button data-key="seek_back" class="round" aria-label="Rewind"><svg viewBox="0 0 24 24"><path d="M11 7l-6 5 6 5zM19 7l-6 5 6 5z"/></svg></button>
+      <button data-key="playpause" class="round big" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path d="M7 5l7 7-7 7zM16 6v12M19.5 6v12"/></svg></button>
+      <button data-key="seek_fwd" class="round" aria-label="Fast forward"><svg viewBox="0 0 24 24"><path d="M5 7l6 5-6 5zM13 7l6 5-6 5z"/></svg></button>
+    </div>
+    <div class="row volume">
+      <button data-vol="down" class="round" aria-label="Volume down"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      <button data-vol="mute" id="vol-level" class="vol-level" aria-label="Mute">Vol –</button>
+      <button data-vol="up" class="round" aria-label="Volume up"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
+    </div>
+  </footer>
+
+  <div id="pair" class="overlay" hidden>
+    <form id="pair-form" class="card">
+      <h2>Pair this remote</h2>
+      <p>Enter the 4-digit PIN shown on the TV.</p>
+      <input id="pin-input" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code" required>
+      <p id="pair-error" class="error" role="alert"></p>
+      <button type="submit" class="pill wide">Pair</button>
+    </form>
+  </div>
+
+  <dialog id="power-dialog" class="card">
+    <h2>TV box power</h2>
+    <form method="dialog" class="stack">
+      <button value="reboot" class="pill wide">Restart</button>
+      <button value="poweroff" class="pill wide danger">Shut down</button>
+      <button value="" class="pill wide ghost">Cancel</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/remote/remote.js"></script>
+</body>
+</html>

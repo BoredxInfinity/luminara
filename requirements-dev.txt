@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest>=8
+watchfiles>=1.0

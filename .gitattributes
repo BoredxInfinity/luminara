@@ -1,0 +1,4 @@
+# The Pi runs these files directly; keep Unix line endings no matter where they're edited.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

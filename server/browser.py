@@ -1,0 +1,407 @@
+"""Chromium control over the DevTools Protocol (CDP).
+
+One WebSocket to the browser endpoint, with the TV tab attached as a flattened
+session. That single connection lets us drive the page *and* see new tabs/popups,
+which a kiosk must fold back into the one visible tab.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import itertools
+import json
+import logging
+from typing import Awaitable, Callable
+
+import aiohttp
+
+from .config import DEFAULT_MEDIA_KEYS, ROOT, Service, Settings, service_for_url
+
+log = logging.getLogger("tvbox.browser")
+
+CURSOR_JS = (ROOT / "web" / "inject" / "cursor.js").read_text(encoding="utf-8")
+
+# name -> (key, code, windowsVirtualKeyCode, text)
+KEYS: dict[str, tuple[str, str, int, str]] = {
+    "up": ("ArrowUp", "ArrowUp", 38, ""),
+    "down": ("ArrowDown", "ArrowDown", 40, ""),
+    "left": ("ArrowLeft", "ArrowLeft", 37, ""),
+    "right": ("ArrowRight", "ArrowRight", 39, ""),
+    "enter": ("Enter", "Enter", 13, "\r"),
+    "space": (" ", "Space", 32, " "),
+    "escape": ("Escape", "Escape", 27, ""),
+    "backspace": ("Backspace", "Backspace", 8, ""),
+    "tab": ("Tab", "Tab", 9, ""),
+    "f": ("f", "KeyF", 70, "f"),
+    "mediaplaypause": ("MediaPlayPause", "MediaPlayPause", 179, ""),
+}
+MEDIA_ACTIONS = ("playpause", "seek_fwd", "seek_back")
+
+
+class CDPError(Exception):
+    pass
+
+
+class Pointer:
+    """Virtual mouse position. Deltas pile up between sends, so a fast phone
+    trackpad never queues more than one CDP mouse event at a time."""
+
+    def __init__(self, width: float = 1920, height: float = 1080):
+        self.width, self.height = width, height
+        self.x, self.y = width / 2, height / 2
+        self._dx = self._dy = 0.0
+        self._sized = False
+
+    def resize(self, width: float, height: float) -> None:
+        first = not self._sized
+        self._sized = True
+        self.width, self.height = max(1.0, width), max(1.0, height)
+        if first:  # until now we only had a guess at the screen size
+            self.x, self.y = self.width / 2, self.height / 2
+        self.x = min(self.x, self.width - 1)
+        self.y = min(self.y, self.height - 1)
+
+    def add(self, dx: float, dy: float) -> None:
+        self._dx += dx
+        self._dy += dy
+
+    def take(self) -> tuple[float, float] | None:
+        """Apply pending deltas. Returns the new position, or None if unchanged."""
+        if not self._dx and not self._dy:
+            return None
+        nx = min(max(self.x + self._dx, 0.0), self.width - 1)
+        ny = min(max(self.y + self._dy, 0.0), self.height - 1)
+        self._dx = self._dy = 0.0
+        if (nx, ny) == (self.x, self.y):
+            return None
+        self.x, self.y = nx, ny
+        return nx, ny
+
+
+def resolve_key(name: str, service: Service | None) -> str:
+    """Map a remote key name (including media actions) to an entry in KEYS."""
+    if name in MEDIA_ACTIONS:
+        name = service.media_key(name) if service else DEFAULT_MEDIA_KEYS[name]
+    if name not in KEYS:
+        raise KeyError(name)
+    return name
+
+
+class Browser:
+    def __init__(
+        self,
+        settings: Settings,
+        services: list[Service],
+        on_change: Callable[[], Awaitable[None] | None],
+    ):
+        self.settings = settings
+        self.services = services
+        self._on_change = on_change
+        self.pointer = Pointer()
+        self.state = {"cdp": False, "view": "offline", "service_id": None, "title": "", "url": ""}
+
+        self._http: aiohttp.ClientSession | None = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._ids = itertools.count(1)
+        self._pending: dict[int, asyncio.Future] = {}
+        self._session: str | None = None
+        self._target: str | None = None
+        self._default_ua: str = ""
+        self._ua_applied: str | None = None
+        self._popups: set[str] = set()
+        self._tasks: set[asyncio.Task] = set()
+        self._moving = False
+        self._runner: asyncio.Task | None = None
+
+    # ---- lifecycle -------------------------------------------------------
+
+    def start(self) -> None:
+        self._runner = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._runner:
+            self._runner.cancel()
+            await asyncio.gather(self._runner, return_exceptions=True)
+        if self._ws:
+            await self._ws.close()
+        if self._http:
+            await self._http.close()
+
+    async def _run(self) -> None:
+        # No session-wide timeout: it would also cut off the long-lived WebSocket.
+        self._http = aiohttp.ClientSession()
+        delay = 0.5
+        while True:
+            try:
+                await self._connect_and_read()
+                delay = 0.5
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - keep retrying whatever happened
+                (log.info if delay == 0.5 else log.debug)("CDP unavailable (%s); retrying", exc)
+            self._reset_connection()
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 5.0)
+
+    def _reset_connection(self) -> None:
+        self._ws = None
+        self._session = self._target = None
+        self._ua_applied = None
+        self._popups.clear()
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(CDPError("connection closed"))
+        self._pending.clear()
+        if self.state["cdp"]:
+            self._update(cdp=False, view="offline")
+
+    async def _connect_and_read(self) -> None:
+        assert self._http
+        async with self._http.get(f"{self.settings.cdp_url}/json/version", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            version = await resp.json(content_type=None)
+        self._default_ua = version.get("User-Agent", "")
+        self._ws = await self._http.ws_connect(version["webSocketDebuggerUrl"], max_msg_size=0)
+        log.info("connected to %s", version.get("Browser", "browser"))
+        reader = asyncio.create_task(self._read(self._ws))
+        try:
+            await self.send("Target.setDiscoverTargets", {"discover": True}, page=False)
+            await self._attach()
+            await reader
+        finally:
+            reader.cancel()
+            if self._ws and not self._ws.closed:
+                await self._ws.close()
+
+    async def _read(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        async for msg in ws:
+            if msg.type != aiohttp.WSMsgType.TEXT:
+                break
+            data = json.loads(msg.data)
+            if "id" in data:
+                fut = self._pending.pop(data["id"], None)
+                if fut and not fut.done():
+                    if "error" in data:
+                        fut.set_exception(CDPError(data["error"].get("message", "CDP error")))
+                    else:
+                        fut.set_result(data.get("result", {}))
+            else:
+                self._dispatch(data.get("method", ""), data.get("params", {}), data.get("sessionId"))
+        raise CDPError("browser connection closed")
+
+    # ---- plumbing --------------------------------------------------------
+
+    async def send(self, method: str, params: dict | None = None, *, page: bool = True, timeout: float = 10) -> dict:
+        ws = self._ws
+        if ws is None or ws.closed:
+            raise CDPError("not connected to Chromium")
+        if page and not self._session:
+            raise CDPError("no page attached")
+        mid = next(self._ids)
+        msg: dict = {"id": mid, "method": method, "params": params or {}}
+        if page:
+            msg["sessionId"] = self._session
+        fut = asyncio.get_running_loop().create_future()
+        self._pending[mid] = fut
+        try:
+            await ws.send_str(json.dumps(msg))
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            self._pending.pop(mid, None)
+
+    def spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(_log_task_error)
+
+    def _update(self, **changes) -> None:
+        if all(self.state.get(k) == v for k, v in changes.items()):
+            return
+        self.state.update(changes)
+        result = self._on_change()
+        if asyncio.iscoroutine(result):
+            self.spawn(result)
+
+    # ---- page attachment -------------------------------------------------
+
+    async def _attach(self) -> None:
+        targets = (await self.send("Target.getTargets", page=False))["targetInfos"]
+        pages = [t for t in targets if t["type"] == "page" and not t["url"].startswith(("devtools://", "chrome-extension://"))]
+        if pages:
+            target = pages[0]
+            for extra in pages[1:]:  # a kiosk shows one tab; anything else is stray
+                self.spawn(self.send("Target.closeTarget", {"targetId": extra["targetId"]}, page=False))
+        else:
+            created = await self.send("Target.createTarget", {"url": self.settings.launcher_url}, page=False)
+            target = {"targetId": created["targetId"], "url": self.settings.launcher_url, "title": ""}
+
+        res = await self.send("Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}, page=False)
+        self._target, self._session = target["targetId"], res["sessionId"]
+
+        await self.send("Page.enable")
+        await self.send("Inspector.enable")
+        # Without this, an unfocused window drops synthetic mouse presses (and some
+        # players pause on blur). Under cage the window is focused anyway; this is cheap.
+        await self.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        await self.send("Page.addScriptToEvaluateOnNewDocument", {"source": CURSOR_JS})
+        await self.send("Runtime.evaluate", {"expression": CURSOR_JS})
+        await self._refresh_viewport()
+        self._update(cdp=True, **self._describe(target["url"], target.get("title", "")))
+        await self._apply_user_agent(service_for_url(self.services, target["url"]))
+        log.info("attached to tab %s (%s)", self._target, target["url"])
+
+    async def _reattach(self) -> None:
+        self._session = self._target = None
+        self._ua_applied = None
+        try:
+            await self._attach()
+        except CDPError as exc:
+            log.warning("re-attach failed: %s", exc)
+
+    async def _refresh_viewport(self) -> None:
+        metrics = await self.send("Page.getLayoutMetrics")
+        vp = metrics.get("cssLayoutViewport") or metrics.get("layoutViewport", {})
+        self.pointer.resize(vp.get("clientWidth", 1920), vp.get("clientHeight", 1080))
+
+    def _describe(self, url: str, title: str) -> dict:
+        if url.startswith(self.settings.launcher_url):
+            return {"view": "launcher", "service_id": None, "url": url, "title": "Home"}
+        svc = service_for_url(self.services, url)
+        return {
+            "view": "service" if svc else "web",
+            "service_id": svc.id if svc else None,
+            "url": url,
+            "title": title,
+        }
+
+    # ---- events ----------------------------------------------------------
+
+    def _dispatch(self, method: str, params: dict, session: str | None) -> None:
+        if method == "Target.targetInfoChanged":
+            info = params["targetInfo"]
+            if info["targetId"] == self._target:
+                self._update(**self._describe(info["url"], info.get("title", "")))
+            elif info["targetId"] in self._popups:
+                self._maybe_fold_popup(info)
+        elif method == "Target.targetCreated":
+            info = params["targetInfo"]
+            if info["type"] == "page" and self._target and info["targetId"] != self._target:
+                self._popups.add(info["targetId"])
+                self._maybe_fold_popup(info)
+        elif method == "Target.targetDestroyed":
+            self._popups.discard(params["targetId"])
+            if params["targetId"] == self._target:
+                log.warning("TV tab closed; re-attaching")
+                self.spawn(self._reattach())
+        elif method == "Target.detachedFromTarget":
+            if params.get("sessionId") == self._session:
+                self.spawn(self._reattach())
+        elif method == "Inspector.targetCrashed" and session == self._session:
+            log.warning("TV tab crashed; going home")
+            self.spawn(self.home())
+
+    def _maybe_fold_popup(self, info: dict) -> None:
+        """Close a popup tab and open its URL in the TV tab instead."""
+        url = info.get("url", "")
+        if not url or url == "about:blank":
+            return  # wait for targetInfoChanged with the real URL
+        self._popups.discard(info["targetId"])
+        self.spawn(self.send("Target.closeTarget", {"targetId": info["targetId"]}, page=False))
+        if url.startswith(("http://", "https://")):
+            self.spawn(self.send("Page.navigate", {"url": url}))
+
+    # ---- commands --------------------------------------------------------
+
+    def current_service(self) -> Service | None:
+        sid = self.state.get("service_id")
+        return next((s for s in self.services if s.id == sid), None)
+
+    async def _apply_user_agent(self, svc: Service | None) -> None:
+        ua = (svc.user_agent if svc else None) or self._default_ua
+        if ua and ua != self._ua_applied:
+            await self.send("Emulation.setUserAgentOverride", {"userAgent": ua})
+            self._ua_applied = ua
+
+    async def launch(self, svc: Service) -> None:
+        await self._apply_user_agent(svc)
+        await self.send("Page.navigate", {"url": svc.url})
+        await self._refresh_viewport()
+
+    async def home(self) -> None:
+        await self._apply_user_agent(None)
+        await self.send("Page.navigate", {"url": self.settings.launcher_url})
+
+    async def back(self) -> None:
+        if self.state["view"] == "launcher":
+            return
+        svc = self.current_service()
+        if svc and svc.keys.get("back"):
+            await self.press(svc.keys["back"])
+            return
+        hist = await self.send("Page.getNavigationHistory")
+        idx, entries = hist["currentIndex"], hist["entries"]
+        if idx <= 0 or entries[idx - 1]["url"].startswith(self.settings.launcher_url):
+            await self.home()
+        else:
+            await self.send("Page.navigateToHistoryEntry", {"entryId": entries[idx - 1]["id"]})
+
+    async def key(self, name: str) -> None:
+        if name == "back":
+            await self.back()
+        else:
+            await self.press(resolve_key(name, self.current_service()))
+
+    async def press(self, name: str) -> None:
+        key, code, vk, text = KEYS[name]
+        down = {"type": "keyDown" if text else "rawKeyDown", "key": key, "code": code,
+                "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk}
+        if text:
+            down["text"] = down["unmodifiedText"] = text
+        await self.send("Input.dispatchKeyEvent", down)
+        await self.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": key, "code": code,
+                                                   "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+
+    async def type_text(self, text: str, enter: bool = False) -> None:
+        if text:
+            await self.send("Input.insertText", {"text": text})
+        if enter:
+            await self.press("enter")
+
+    # Pointer input arrives at phone frame rate; it is fire-and-forget.
+
+    def move(self, dx: float, dy: float) -> None:
+        if not self._session:
+            return
+        self.pointer.add(dx, dy)
+        if not self._moving:
+            self._moving = True
+            self.spawn(self._flush_moves())
+
+    async def _flush_moves(self) -> None:
+        try:
+            while (pos := self.pointer.take()) is not None:
+                await self.send("Input.dispatchMouseEvent",
+                                {"type": "mouseMoved", "x": pos[0], "y": pos[1], "button": "none"}, timeout=2)
+        finally:
+            self._moving = False
+
+    async def click(self) -> None:
+        x, y = self.pointer.x, self.pointer.y
+        base = {"x": x, "y": y, "button": "left", "clickCount": 1}
+        await self.send("Input.dispatchMouseEvent", {"type": "mousePressed", "buttons": 1, **base})
+        await self.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "buttons": 0, **base})
+
+    async def scroll(self, dy: float) -> None:
+        await self.send("Input.dispatchMouseEvent", {
+            "type": "mouseWheel", "x": self.pointer.x, "y": self.pointer.y, "deltaX": 0, "deltaY": dy,
+        })
+
+
+def _log_task_error(task: asyncio.Task) -> None:
+    if task.cancelled() or task.exception() is None:
+        return
+    exc = task.exception()
+    if isinstance(exc, (CDPError, asyncio.TimeoutError)):
+        log.debug("CDP call failed: %s", exc)
+    else:
+        log.error("background task failed", exc_info=exc)

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "netflix",
+    "name": "Netflix",
+    "url": "https://www.netflix.com/browse",
+    "icon": "N",
+    "color": "#b20710",
+    "match": ["netflix.com"]
+  },
+  {
+    "id": "prime",
+    "name": "Prime Video",
+    "url": "https://www.primevideo.com/",
+    "icon": "P",
+    "color": "#1a98ff",
+    "match": ["primevideo.com", "amazon.com", "amazon.in"]
+  },
+  {
+    "id": "jiohotstar",
+    "name": "JioHotstar",
+    "url": "https://www.hotstar.com/in/home",
+    "icon": "J",
+    "color": "#0c1a4b",
+    "match": ["hotstar.com", "jiohotstar.com"]
+  },
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "url": "https://www.youtube.com/tv",
+    "icon": "▶",
+    "color": "#cc0000",
+    "match": ["youtube.com"],
+    "user_agent": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.0 TV Safari/537.36",
+    "keys": {"playpause": "mediaplaypause", "back": "escape"}
+  }
+]

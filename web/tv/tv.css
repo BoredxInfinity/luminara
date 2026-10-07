@@ -1,0 +1,63 @@
+:root {
+  --bg: #0b0d12;
+  --fg: #f2f4f8;
+  --muted: #8a92a6;
+  --ring: #ffffff;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: radial-gradient(circle at 20% 0%, #1b2233 0%, var(--bg) 55%);
+  color: var(--fg);
+  font: 400 clamp(16px, 1.25vw, 28px)/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+  cursor: none;
+  user-select: none;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  padding: 4vh 5vw;  /* TV-safe margins */
+}
+header { display: flex; justify-content: space-between; align-items: baseline; }
+h1 { font-size: 1.6em; font-weight: 600; letter-spacing: .02em; }
+#clock { font-size: 2em; font-variant-numeric: tabular-nums; font-weight: 300; }
+
+main { display: flex; align-items: center; }
+.tiles {
+  list-style: none;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2.5vw;
+}
+.tile {
+  aspect-ratio: 16 / 9;
+  border-radius: 1.2vw;
+  background: var(--tile, #333);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .3em;
+  transition: transform .15s ease-out, box-shadow .15s ease-out;
+  box-shadow: 0 .6vw 1.6vw rgba(0, 0, 0, .45);
+  outline: none;
+}
+.tile .icon { font-size: 3.2em; font-weight: 800; line-height: 1; }
+.tile .name { font-size: 1.1em; font-weight: 600; opacity: .95; }
+.tile[aria-selected="true"] {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 .3vw var(--ring), 0 1.2vw 3vw rgba(0, 0, 0, .6);
+}
+
+.pair { display: flex; align-items: center; gap: 1.5vw; justify-self: end; }
+.pair img { width: 9vw; height: 9vw; min-width: 120px; min-height: 120px; border-radius: .6vw; background: #fff; }
+.pair .label { color: var(--muted); }
+.pair .url { font-size: 1.15em; font-weight: 600; }
+.pair .pin { margin-top: .3em; color: var(--muted); }
+.pair .pin strong { color: var(--fg); font-size: 1.4em; letter-spacing: .25em; font-variant-numeric: tabular-nums; }
+
+.status {
+  position: fixed; left: 50%; bottom: 3vh; transform: translateX(-50%);
+  background: rgba(0, 0, 0, .7); padding: .4em 1em; border-radius: 2em; color: var(--muted);
+}

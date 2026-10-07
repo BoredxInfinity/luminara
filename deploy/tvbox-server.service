@@ -1,0 +1,19 @@
+[Unit]
+Description=TV box controller (remote API + Chromium control)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/.venv/bin/python -m server.main
+# wpctl reaches the user's PipeWire through this directory (lingering keeps it up).
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=2
+MemoryMax=150M
+
+[Install]
+WantedBy=multi-user.target

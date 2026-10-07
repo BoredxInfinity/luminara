@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Luminara</title>
+  <link rel="stylesheet" href="/tv/tv.css">
+</head>
+<body>
+  <header>
+    <h1>Luminara</h1>
+    <time id="clock"></time>
+  </header>
+  <main>
+    <ul id="tiles" class="tiles" role="listbox" aria-label="Services"></ul>
+  </main>
+  <aside class="pair">
+    <img id="qr" alt="QR code for the remote" width="168" height="168">
+    <div>
+      <p class="label">Scan with your phone to get the remote</p>
+      <p id="url" class="url"></p>
+      <p id="pin" class="pin" hidden>PIN <strong></strong></p>
+    </div>
+  </aside>
+  <p id="status" class="status" hidden>Connecting…</p>
+  <script src="/tv/tv.js"></script>
+</body>
+</html>
