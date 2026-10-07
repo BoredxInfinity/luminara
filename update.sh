@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Pull the latest code from GitHub and apply it. Run on the Pi as your normal user:
 #   ./update.sh           # pull, then restart whatever the changes need
-#   ./update.sh --force   # restart everything even if nothing new was pulled
+#   ./update.sh --force   # restart the controller and the TV even if nothing new was pulled
+# System changes (install.sh, deploy/*.service) are applied by re-running sudo ./install.sh.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -24,7 +25,7 @@ fi
 
 OLD="$(git rev-parse HEAD)"
 say "Pulling"
-git pull --ff-only
+git pull --ff-only --quiet
 NEW="$(git rev-parse HEAD)"
 
 if [[ "$OLD" == "$NEW" && $FORCE -eq 0 ]]; then
@@ -32,11 +33,10 @@ if [[ "$OLD" == "$NEW" && $FORCE -eq 0 ]]; then
   exit 0
 fi
 
+CHANGED="$(git diff --name-only "$OLD" "$NEW")"
+git --no-pager log --oneline "$OLD..$NEW"
 if [[ $FORCE -eq 1 ]]; then
-  CHANGED="$(git ls-files)"  # treat everything as changed
-else
-  CHANGED="$(git diff --name-only "$OLD" "$NEW")"
-  git --no-pager log --oneline "$OLD..$NEW"
+  CHANGED+=$'\nrequirements.txt\nweb/'  # reinstall packages, restart both services
 fi
 changed() { grep -qE "$1" <<<"$CHANGED"; }
 
