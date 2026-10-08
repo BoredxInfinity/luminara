@@ -38,8 +38,13 @@ class Mirror:
         if len(self.viewers) == 1:
             await self.browser.screencast(True)
         # The screencast only sends frames when something changes: show a still page at once.
+        # Only a nicety: a busy Pi can be slow to grab it, and that mustn't drop the phone.
         if not self._last_frame:
-            self._last_frame = await self.browser.snapshot()
+            try:
+                self._last_frame = await self.browser.snapshot()
+            except (CDPError, asyncio.TimeoutError) as exc:
+                log.debug("no opening snapshot: %s", exc)
+                return
         await self._send(ws, self._last_frame)
 
     async def leave(self, ws: web.WebSocketResponse) -> None:

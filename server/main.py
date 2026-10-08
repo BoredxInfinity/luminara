@@ -542,7 +542,7 @@ async def mirror_handler(request: web.Request):
     await ws.prepare(request)
     try:
         await mirror.join(ws)
-    except CDPError:
+    except (CDPError, asyncio.TimeoutError):
         pass  # the TV browser isn't up yet; frames start when it attaches
     try:
         async for msg in ws:

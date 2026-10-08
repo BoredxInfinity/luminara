@@ -471,7 +471,7 @@ class Browser:
         """One screencast-sized JPEG of the TV right now."""
         w, h = self.pointer.width * self._pixel_ratio, self.pointer.height * self._pixel_ratio
         scale = min(1.0, SCREENCAST["maxWidth"] / w, SCREENCAST["maxHeight"] / h)
-        res = await self.send("Page.captureScreenshot", {
+        res = await self.send("Page.captureScreenshot", timeout=5, params={
             "format": "jpeg", "quality": SCREENCAST["quality"],
             "clip": {"x": 0, "y": 0, "width": self.pointer.width, "height": self.pointer.height, "scale": scale},
         })

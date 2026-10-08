@@ -156,3 +156,32 @@ def test_mirror_touches_map_onto_the_tv_and_move_the_cursor(tmp_path):
     assert (b.pointer.x, b.pointer.y) == (959.5, 539.5)  # the touchpad carries on from here
     assert b._at(-3, 9) == (0.0, 1079.0)                 # off the picture: clamped to the edge
     assert _frac(5) == 1.0 and _frac("-0.25") == -0.25
+
+
+def test_mirror_join_survives_a_slow_snapshot():
+    import asyncio
+
+    from server.mirror import Mirror
+
+    class SlowBrowser:
+        on_frame = None
+        casting = None
+
+        async def screencast(self, on):
+            self.casting = on
+
+        async def snapshot(self):
+            raise asyncio.TimeoutError  # a busy Pi took too long
+
+    class Phone:
+        closed = False
+
+    async def run():
+        browser, phone = SlowBrowser(), Phone()
+        mirror = Mirror(browser)
+        await mirror.join(phone)  # must not raise: the phone stays connected
+        assert phone in mirror.viewers and browser.casting is True
+        await mirror.leave(phone)
+        assert not mirror.viewers and browser.casting is False
+
+    asyncio.run(run())
