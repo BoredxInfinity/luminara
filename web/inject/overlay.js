@@ -34,6 +34,16 @@
 
   if (window.top !== window || window.__tvbox) return;
 
+  // Some players (Spotify) play through an <audio> that's never put in the page, where
+  // querySelectorAll can't see it. We run before the page's scripts, so remember every
+  // element that starts playing.
+  const started = new Set();
+  const realPlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function (...args) {
+    started.add(this);
+    return realPlay.apply(this, args);
+  };
+
   const CSS = `
     :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; }
     .layer { position: fixed; inset: 0; font: 600 22px/1.2 "Noto Sans Display","Noto Sans",system-ui,sans-serif; color: #fff; }
@@ -260,9 +270,12 @@
     const ms = navigator.mediaSession;
     const md = ms && ms.metadata;
     if (!md || !md.title) return null;
-    const media = [...document.querySelectorAll("audio, video")];
+    for (const m of started) if (!m.isConnected && !m.currentSrc) started.delete(m);  // discarded players
+    const media = [...new Set([...document.querySelectorAll("audio, video"), ...started])];
+    // Spotify leaves playbackState at "none", so the elements decide when it isn't set.
     const playing = ms.playbackState === "playing" || media.some((m) => !m.paused && !m.ended);
-    if (!playing && ms.playbackState !== "paused") return null;
+    const paused = ms.playbackState === "paused" || media.some((m) => m.paused && !m.ended && m.currentTime > 0);
+    if (!playing && !paused) return null;
     const art = [...(md.artwork || [])].sort((a, b) => parseInt(b.sizes) - parseInt(a.sizes))[0];
     return { title: md.title, artist: md.artist, album: md.album, art: art && art.src, playing,
              source: onSpotify ? "Playing on Spotify" : "Now playing" };
