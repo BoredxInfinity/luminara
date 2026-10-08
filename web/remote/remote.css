@@ -262,3 +262,35 @@ dialog.sheet[open] { animation: slide-up .3s cubic-bezier(.2, .9, .3, 1); }
 .about { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 14px; }
 .about dt { color: var(--muted); }
 .about dd { text-align: right; overflow-wrap: anywhere; }
+
+/* ---- mirror mode: the TV picture fills the phone ---- */
+body.mirroring { overflow: hidden; }
+body.mirroring > :not(.mirror):not(dialog):not(.toast):not(.overlay) { display: none !important; }
+.mirror {
+  position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; background: #000;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.mirror-stage { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; overflow: hidden; touch-action: none; }
+.mirror-stage canvas { display: block; transform-origin: center; background: #0b0d13; }
+.mirror-status { position: absolute; left: 0; right: 0; top: 50%; translate: 0 -50%; text-align: center; color: var(--muted); font-size: 15px; pointer-events: none; }
+.mirror-status:empty { display: none; }
+.mirror-type { display: flex; gap: 8px; padding: 8px 10px; background: var(--bg); border-top: 1px solid var(--line); }
+.mirror-type input {
+  flex: 1; min-width: 0; min-height: 44px; padding: 0 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: inherit; font-size: 17px;
+  user-select: text; -webkit-user-select: text;
+}
+.mirror-type .pill { flex: none; }
+.mirror-bar { display: flex; gap: 4px; padding: 6px 8px; background: var(--bg); border-top: 1px solid var(--line); }
+.mbtn {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  padding: 7px 2px; border-radius: 12px; font-size: 11px; font-weight: 600; color: var(--muted); background: transparent;
+}
+.mbtn.on { color: #fff; background: var(--accent); }
+/* Phone on its side: controls move to a column on the right. */
+@media (orientation: landscape) and (max-height: 600px) {
+  .mirror { flex-direction: row; flex-wrap: wrap; }
+  .mirror-stage { height: 100%; }
+  .mirror-bar { order: 2; flex-direction: column; width: 68px; border-top: 0; border-left: 1px solid var(--line); }
+  .mirror-type { position: absolute; left: env(safe-area-inset-left); right: calc(68px + env(safe-area-inset-right)); bottom: env(safe-area-inset-bottom); }
+}

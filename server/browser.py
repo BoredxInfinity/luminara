@@ -8,6 +8,7 @@ which a kiosk must fold back into the one visible tab.
 from __future__ import annotations
 
 import asyncio
+import base64
 import itertools
 import json
 import logging
@@ -39,6 +40,10 @@ KEYS: dict[str, tuple[str, str, int, str]] = {
     "mediaplaypause": ("MediaPlayPause", "MediaPlayPause", 179, ""),
 }
 MEDIA_ACTIONS = ("playpause", "seek_fwd", "seek_back")
+
+# Screen mirroring (server/mirror.py): half-HD JPEGs are sharp enough on a phone and
+# cheap enough for the Pi to encode.
+SCREENCAST = {"format": "jpeg", "quality": 60, "maxWidth": 1280, "maxHeight": 720, "everyNthFrame": 1}
 
 
 class CDPError(Exception):
@@ -128,6 +133,9 @@ class Browser:
         self._moving = False
         self._reattaching = False
         self._runner: asyncio.Task | None = None
+        self.screencasting = False
+        self._pixel_ratio = 1.0
+        self.on_frame: Callable[[dict], None] | None = None  # set by server/mirror.py
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -264,6 +272,8 @@ class Browser:
         await self.send("Runtime.evaluate", {"expression": self._overlay_source()})
         await self.send("Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.osd({kind: 'ready'})"})
         await self._refresh_viewport()
+        if self.screencasting:  # a phone was mirroring the tab we lost
+            await self.send("Page.startScreencast", SCREENCAST)
         self._update(cdp=True, **self._describe(target["url"], target.get("title", "")))
         await self._apply_user_agent(service_for_url(self.services, target["url"]))
         log.info("attached to tab %s (%s)", self._target, target["url"])
@@ -287,6 +297,8 @@ class Browser:
         metrics = await self.send("Page.getLayoutMetrics")
         vp = metrics.get("cssLayoutViewport") or metrics.get("layoutViewport", {})
         self.pointer.resize(vp.get("clientWidth", 1920), vp.get("clientHeight", 1080))
+        css, device = metrics.get("cssVisualViewport", {}), metrics.get("visualViewport", {})
+        self._pixel_ratio = (device.get("clientWidth") or 1) / (css.get("clientWidth") or device.get("clientWidth") or 1)
 
     def _describe(self, url: str, title: str) -> dict:
         if url.startswith(self.settings.launcher_url):
@@ -321,6 +333,8 @@ class Browser:
         elif method == "Target.detachedFromTarget":
             if params.get("sessionId") == self._session:
                 self.spawn(self._reattach())
+        elif method == "Page.screencastFrame" and session == self._session and self.on_frame:
+            self.on_frame(params)
         elif method == "Inspector.targetCrashed" and session == self._session:
             log.warning("TV tab crashed; going home")
             self.spawn(self.home())
@@ -444,6 +458,58 @@ class Browser:
         await self.send("Input.dispatchMouseEvent", {
             "type": "mouseWheel", "x": self.pointer.x, "y": self.pointer.y, "deltaX": 0, "deltaY": dy,
         })
+
+    # Screen mirroring: phones send positions as fractions (0..1) of the TV picture.
+    # The touchpad cursor follows, so switching back to it carries on from there.
+
+    async def screencast(self, on: bool) -> None:
+        self.screencasting = on
+        if self._session:
+            await self.send("Page.startScreencast" if on else "Page.stopScreencast", SCREENCAST if on else None)
+
+    async def snapshot(self) -> bytes:
+        """One screencast-sized JPEG of the TV right now."""
+        w, h = self.pointer.width * self._pixel_ratio, self.pointer.height * self._pixel_ratio
+        scale = min(1.0, SCREENCAST["maxWidth"] / w, SCREENCAST["maxHeight"] / h)
+        res = await self.send("Page.captureScreenshot", {
+            "format": "jpeg", "quality": SCREENCAST["quality"],
+            "clip": {"x": 0, "y": 0, "width": self.pointer.width, "height": self.pointer.height, "scale": scale},
+        })
+        return base64.b64decode(res["data"])
+
+    def _at(self, nx, ny) -> tuple[float, float]:
+        x = min(max(float(nx), 0.0), 1.0) * (self.pointer.width - 1)
+        y = min(max(float(ny), 0.0), 1.0) * (self.pointer.height - 1)
+        self.pointer.x, self.pointer.y = x, y
+        return x, y
+
+    async def pointer_event(self, kind: str, nx, ny) -> None:
+        """hover: move the mouse; press/drag/release: hold the button down (sliders, seek bars)."""
+        x, y = self._at(nx, ny)
+        event = {"hover": ("mouseMoved", "none", 0), "press": ("mousePressed", "left", 1),
+                 "drag": ("mouseMoved", "left", 1), "release": ("mouseReleased", "left", 0)}[kind]
+        await self.send("Input.dispatchMouseEvent", {
+            "type": event[0], "x": x, "y": y, "button": event[1], "buttons": event[2], "clickCount": 1 if kind != "hover" else 0,
+        }, timeout=3)
+
+    async def tap(self, nx, ny, count: int = 1) -> None:
+        x, y = self._at(nx, ny)
+        await self.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y, "button": "none"})
+        base = {"x": x, "y": y, "button": "left", "clickCount": count}
+        await self.send("Input.dispatchMouseEvent", {"type": "mousePressed", "buttons": 1, **base})
+        await self.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "buttons": 0, **base})
+
+    async def pan(self, nx, ny, dx, dy) -> None:
+        """A finger dragging the page: scroll the thing under it, following the finger."""
+        x, y = self._at(nx, ny)
+        await self.send("Input.dispatchMouseEvent", {
+            "type": "mouseWheel", "x": x, "y": y,
+            "deltaX": -_frac(dx) * self.pointer.width, "deltaY": -_frac(dy) * self.pointer.height,
+        }, timeout=3)
+
+
+def _frac(v) -> float:
+    return min(max(float(v), -1.0), 1.0)
 
 
 def _log_task_error(task: asyncio.Task) -> None:

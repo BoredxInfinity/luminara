@@ -21,6 +21,7 @@ from .auth import COOKIE, Auth, Locked
 from .browser import KEYS, MEDIA_ACTIONS, Browser, CDPError
 from .config import ROOT, WEB_DIR, Settings, load_services, load_settings
 from .logos import Logos
+from .mirror import Mirror
 from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
 from .system import System, system_info
 from .updater import Updater
@@ -45,6 +46,7 @@ class Hub:
         self.logos = Logos(settings.data_dir, self.services)
         self.updater = Updater(ROOT, settings.data_dir)
         self.browser = Browser(settings, self.services, self.on_browser_change)
+        self.mirror = Mirror(self.browser)
         self.browser.page_config = self.page_config()
         self.clients: dict[web.WebSocketResponse, str] = {}  # socket -> "tv" | "remote"
         self.volume = {"volume": None, "muted": False}
@@ -240,7 +242,7 @@ def _same_origin(request: web.Request) -> bool:
 @web.middleware
 async def guard(request: web.Request, handler):
     path = request.path
-    if path == "/ws" or path.startswith("/api/"):
+    if path == "/ws" or path.startswith(("/ws/", "/api/")):
         # Any website open in Chromium could call localhost; only same-origin may.
         if not _same_origin(request):
             raise web.HTTPForbidden(text="cross-origin request refused")
@@ -451,8 +453,8 @@ async def reset_pin(request: web.Request):
     hub.auth.reset()
     hub._qr = None
     # Already-connected phones must pair again too.
-    await asyncio.gather(*(ws.close(code=WSCloseCode.POLICY_VIOLATION) for ws, role in list(hub.clients.items())
-                           if role == "remote"), return_exceptions=True)
+    phones = [ws for ws, role in hub.clients.items() if role == "remote"] + list(hub.mirror.viewers)
+    await asyncio.gather(*(ws.close(code=WSCloseCode.POLICY_VIOLATION) for ws in phones), return_exceptions=True)
     await hub.send_to("tv", {"t": "repaired"})  # the launcher reloads its QR code and PIN
     return ok()
 
@@ -527,6 +529,29 @@ async def ws_handler(request: web.Request):
             if hub.remote_count() == 0:
                 hub._remote_left_at = time.monotonic()
             await hub.broadcast()
+    return ws
+
+
+@routes.get("/ws/mirror")
+async def mirror_handler(request: web.Request):
+    """Screen mirroring: JPEG frames out (binary), touches and typing in (JSON)."""
+    mirror = request.app[HUB].mirror
+    ws = web.WebSocketResponse(heartbeat=30, max_msg_size=4096)
+    await ws.prepare(request)
+    try:
+        await mirror.join(ws)
+    except CDPError:
+        pass  # the TV browser isn't up yet; frames start when it attaches
+    try:
+        async for msg in ws:
+            if msg.type != WSMsgType.TEXT:
+                continue
+            try:
+                mirror.handle(json.loads(msg.data))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                log.debug("ignoring bad mirror message: %.80s", msg.data)
+    finally:
+        await mirror.leave(ws)
     return ws
 
 

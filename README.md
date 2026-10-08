@@ -172,6 +172,12 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - The D-pad accepts taps or swipes; hold an arrow, ⏪/⏩ or volume to repeat.
   - There's a volume meter, a touchpad and a keyboard.
   - "Add to Home Screen" gives it an app icon.
+- **Mirror mode** (the screen button at the top of the remote): the phone shows the TV picture live, and you use it like a touchscreen.
+  - Tap to click, double-tap to double-click, drag to scroll whatever is under your finger, long-press then drag to hold the mouse button (seek bars, sliders).
+  - Pinch to zoom the picture on the phone (it doesn't change the TV); two fingers move around while zoomed.
+  - The bar has Remote (back to the normal remote), Back, Home, Type (the phone keyboard types straight onto the TV, corrections included) and volume.
+  - The Pi streams only while a phone is in mirror mode and its screen is on, at most 12 frames a second and only when the picture changes.
+  - Netflix, Prime Video and JioHotstar video show black in the mirror: their copy protection blocks capturing the picture. Their menus mirror normally.
 - **Quiet browser:** Chromium policies (`deploy/chromium-policy.json`) turn off password saving, notification and location prompts, translate bars, sign-in nags and downloads.
 - **No stray cursor:** cage would draw a cursor in the middle of the screen. `deploy/cursors/` is a transparent cursor theme that hides it.
 - **Volume starts at 100% on every boot.** Change it in Settings.
@@ -277,6 +283,7 @@ Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`
 | `web/inject/overlay.js` | injected into every page: H.264 steering, screensaver, cursor, volume bar, toasts |
 | `web/inject/dpad.js` | injected too: D-pad navigation for sites with `dpad` in `services.json` |
 | `web/remote/settings.js` | the Settings panel |
+| `web/remote/mirror.js`, `server/mirror.py` | mirror mode: the TV picture on the phone, touches back to the TV |
 | `deploy/` | systemd units (incl. `tvbox-update.service`), cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
 | `install.sh` | one-time Pi setup |
 | `update.sh` | pull and apply on the Pi |

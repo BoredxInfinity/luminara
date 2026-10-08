@@ -144,3 +144,15 @@ def test_dpad_services():
     assert by_id["netflix"].dpad and by_id["netflix"].dpad_cards is None
     assert by_id["jiohotstar"].dpad and by_id["jiohotstar"].dpad_cards
     assert not by_id["youtube"].dpad  # YouTube's TV interface handles arrows itself
+
+
+def test_mirror_touches_map_onto_the_tv_and_move_the_cursor(tmp_path):
+    from server.browser import Browser, _frac
+    from server.config import Settings
+
+    b = Browser(Settings(data_dir=tmp_path), SERVICES, lambda: None)
+    b.pointer.resize(1920, 1080)
+    assert b._at(0.5, 0.5) == (959.5, 539.5)
+    assert (b.pointer.x, b.pointer.y) == (959.5, 539.5)  # the touchpad carries on from here
+    assert b._at(-3, 9) == (0.0, 1079.0)                 # off the picture: clamped to the edge
+    assert _frac(5) == 1.0 and _frac("-0.25") == -0.25
