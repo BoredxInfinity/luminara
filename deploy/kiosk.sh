@@ -45,7 +45,10 @@ TVBOX_DISABLE_FEATURES="" TVBOX_EXTRA_FLAGS=""
 SETTINGS_ENV="${TVBOX_DATA_DIR:-$HOME/.local/state/tvbox}/chromium.env"
 # shellcheck disable=SC1090
 [ -f "$SETTINGS_ENV" ] && . "$SETTINGS_ENV"
-FEATURES="Translate,MediaRouter,OptimizationHints${TVBOX_DISABLE_FEATURES:+,$TVBOX_DISABLE_FEATURES}"
+# BackForwardCache would keep the app you just left frozen in memory in case you press
+# Back; SpareRendererForSitePerProcess keeps an idle renderer warm. Neither is worth the
+# RAM here: leaving an app should free everything it used.
+FEATURES="Translate,MediaRouter,OptimizationHints,BackForwardCache,SpareRendererForSitePerProcess${TVBOX_DISABLE_FEATURES:+,$TVBOX_DISABLE_FEATURES}"
 
 # --remote-debugging-port binds to 127.0.0.1 only. It needs a non-default
 # --user-data-dir on current Chromium, which we want anyway so logins persist.

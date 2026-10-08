@@ -33,7 +33,8 @@ if curl -fsS -o /dev/null http://127.0.0.1:9222/json/version 2>/dev/null; then
   echo "A browser is already listening on 9222; using it as the TV."
 else
   "$CHROME" --remote-debugging-port=9222 --user-data-dir="$PWD/.dev/chrome-profile" \
-    --no-first-run --no-default-browser-check --hide-crash-restore-bubble \
+    --no-first-run --no-default-browser-check --hide-crash-restore-bubble --hide-scrollbars \
+    --disable-features=BackForwardCache,SpareRendererForSitePerProcess \
     --window-size=1280,760 "http://127.0.0.1:$PORT/tv" >.dev/chrome.log 2>&1 &
   CHROME_PID=$!
 fi

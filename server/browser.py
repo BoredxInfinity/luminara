@@ -41,6 +41,8 @@ KEYS: dict[str, tuple[str, str, int, str]] = {
 }
 MEDIA_ACTIONS = ("playpause", "seek_fwd", "seek_back")
 
+RELEASE_AFTER = 1.5  # seconds after going home before Chromium is told to free memory
+
 # Screen mirroring (server/mirror.py): 960x540 JPEGs are sharp enough on a phone and
 # cheap enough for the Pi to encode next to a playing video.
 SCREENCAST = {"format": "jpeg", "quality": 55, "maxWidth": 960, "maxHeight": 540, "everyNthFrame": 1}
@@ -269,8 +271,15 @@ class Browser:
         # players pause on blur). Under cage the window is focused anyway; this is cheap.
         await self.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
         await self._register_overlay()
-        await self.send("Runtime.evaluate", {"expression": self._overlay_source()})
-        await self.send("Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.osd({kind: 'ready'})"})
+        try:
+            await self.send("Runtime.evaluate", {"expression": self._overlay_source()})
+            await self.send("Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.osd({kind: 'ready'})"})
+        except CDPError as exc:
+            # A tab Chromium discarded (e.g. under memory pressure) has no page to run in.
+            # Load the home screen into it instead of retrying forever.
+            log.warning("TV tab has no live page (%s); loading the home screen", exc)
+            await self.send("Page.navigate", {"url": self.settings.launcher_url})
+            target = {**target, "url": self.settings.launcher_url}
         await self._refresh_viewport()
         if self.screencasting:  # a phone was mirroring the tab we lost
             await self.send("Page.startScreencast", SCREENCAST)
@@ -367,8 +376,21 @@ class Browser:
         await self._refresh_viewport()
 
     async def home(self) -> None:
+        leaving_app = self.state["view"] != "launcher"
         await self._apply_user_agent(None)
         await self.send("Page.navigate", {"url": self.settings.launcher_url})
+        if leaving_app:
+            self.spawn(self._release_memory())
+
+    async def _release_memory(self) -> None:
+        """After leaving an app, hand back what it used. The app's renderer exits with the
+        page (kiosk.sh turns off the back-forward cache), but freed memory and caches can
+        linger in the processes that remain; a simulated memory-pressure signal makes every
+        Chromium process drop them now rather than whenever it gets round to it.
+        Only "moderate": "critical" makes Chromium discard tabs, including the home screen,
+        and Memory.forciblyPurgeJavaScriptMemory kills the page's scripts outright."""
+        await asyncio.sleep(RELEASE_AFTER)  # let the home screen finish loading first
+        await self.send("Memory.simulatePressureNotification", {"level": "moderate"}, timeout=5)
 
     async def back(self) -> None:
         if self.state["view"] == "launcher":

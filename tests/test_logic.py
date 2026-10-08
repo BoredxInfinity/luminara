@@ -185,3 +185,36 @@ def test_mirror_join_survives_a_slow_snapshot():
         assert not mirror.viewers and browser.casting is False
 
     asyncio.run(run())
+
+
+def test_going_home_from_an_app_frees_memory_safely(tmp_path, monkeypatch):
+    import asyncio
+
+    import server.browser as browser_mod
+    from server.browser import Browser
+    from server.config import Settings
+
+    monkeypatch.setattr(browser_mod, "RELEASE_AFTER", 0)
+    b = Browser(Settings(data_dir=tmp_path), SERVICES, lambda: None)
+    sent = []
+
+    async def fake_send(method, params=None, **kw):
+        sent.append((method, params))
+        return {}
+
+    b.send = fake_send
+
+    async def run():
+        b.state["view"] = "service"            # Spotify was open
+        await b.home()
+        await asyncio.gather(*b._tasks)
+        # Only the moderate signal: "critical" and forciblyPurgeJavaScriptMemory kill the page.
+        assert ("Memory.simulatePressureNotification", {"level": "moderate"}) in sent
+        assert not any(m == "Memory.forciblyPurgeJavaScriptMemory" for m, _ in sent)
+        sent.clear()
+        b.state["view"] = "launcher"           # already home: nothing to free
+        await b.home()
+        await asyncio.gather(*b._tasks)
+        assert not any(m.startswith("Memory.") for m, _ in sent)
+
+    asyncio.run(run())

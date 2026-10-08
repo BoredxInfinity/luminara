@@ -45,10 +45,11 @@
   // Some players (Spotify) play through an <audio> that's never put in the page, where
   // querySelectorAll can't see it. We run before the page's scripts, so remember every
   // element that starts playing.
-  const started = new Set();
+  // Held weakly: a player the page throws away can still be freed.
+  const started = new Set(), seen = new WeakSet();
   const realPlay = HTMLMediaElement.prototype.play;
   HTMLMediaElement.prototype.play = function (...args) {
-    started.add(this);
+    if (!seen.has(this)) { seen.add(this); started.add(new WeakRef(this)); }
     return realPlay.apply(this, args);
   };
 
@@ -96,8 +97,11 @@
     .tt { position: absolute; inset: 0; display: none; align-items: center; gap: 7vw; padding: 0 8vw; }
     .music .tt { display: flex; }
     .music canvas { display: none; }
-    .tt-bg { position: absolute; inset: -10%; background-size: cover; background-position: center;
-             filter: blur(70px) saturate(1.4) brightness(.45); transform: scale(1.1); }
+    /* A blurred album-art backdrop. Blurring a small copy and scaling it up looks the same
+       as blurring a full-screen one and costs the Pi's GPU a fraction as much. */
+    .tt-bg { position: absolute; left: 50%; top: 50%; width: 24vw; height: 24vh; background-size: cover;
+             background-position: center; filter: blur(13px) saturate(1.4) brightness(.45);
+             transform: translate(-50%, -50%) scale(5.4); }
     .deck { position: relative; flex: none; width: 62vh; height: 52vh; border-radius: 3vh;
             background: linear-gradient(160deg, #3a2a1f, #1d1510 60%, #120d0a);
             box-shadow: 0 4vh 9vh rgba(0,0,0,.65), inset 0 .3vh 0 rgba(255,255,255,.08); }
@@ -278,8 +282,13 @@
     const ms = navigator.mediaSession;
     const md = ms && ms.metadata;
     if (!md || !md.title) return null;
-    for (const m of started) if (!m.isConnected && !m.currentSrc) started.delete(m);  // discarded players
-    const media = [...new Set([...document.querySelectorAll("audio, video"), ...started])];
+    const live = [];
+    for (const ref of started) {
+      const m = ref.deref();
+      if (m && (m.isConnected || m.currentSrc)) live.push(m);
+      else started.delete(ref);  // discarded players
+    }
+    const media = [...new Set([...document.querySelectorAll("audio, video"), ...live])];
     // Spotify leaves playbackState at "none", so the elements decide when it isn't set.
     const playing = ms.playbackState === "playing" || media.some((m) => !m.paused && !m.ended);
     const paused = ms.playbackState === "paused" || media.some((m) => m.paused && !m.ended && m.currentTime > 0);
@@ -297,11 +306,24 @@
     else if (!videoPlaying()) startSaver();
   }, 5000);
 
-  let rafId = 0, startedAt = 0, metaTimer = 0, lastFrame = 0;
+  let rafId = 0, startedAt = 0, metaTimer = 0, lastFrame = 0, moving = true;
+
+  // Muted autoplaying trailers (Netflix, Prime, JioHotstar menus) keep decoding video
+  // under the screensaver for nobody: pause them while it's up.
+  let pausedUnder = [];
+  function pauseTrailers() {
+    pausedUnder = [...document.querySelectorAll("video")].filter((v) => v.muted && !v.paused);
+    for (const v of pausedUnder) v.pause();
+  }
+  function resumeTrailers() {
+    for (const v of pausedUnder) if (v.isConnected && v.paused) v.play().catch(() => {});
+    pausedUnder = [];
+  }
 
   function startSaver() {
     const u = ensure();
     saverOn = true;
+    pauseTrailers();
     startedAt = performance.now();
     u.saver.classList.remove("leaving");
     u.clock.style.display = cfg.saverClock ? "" : "none";
@@ -315,6 +337,7 @@
   function stopSaver() {
     const u = ensure();
     saverOn = false;
+    resumeTrailers();
     clearInterval(metaTimer);
     u.saver.classList.add("leaving");
     u.saver.classList.remove("on");
@@ -390,7 +413,7 @@
     " ": ["000", "000", "000", "000", "000", "000", "000"],
   };
   const SUFFIX_SCALE = 0.42;  // AM/PM drawn smaller, like a superscript
-  const SUB = 4;              // particles per cell side: each lit cell is a SUB x SUB cluster
+  const SUB = 2;              // particles per cell side: each lit cell is a SUB x SUB cluster
   const DATE_CELL = 1.2;      // a date cell (one particle) is this many clock particles wide
   const DAYS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
   const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST",
@@ -464,28 +487,8 @@
     return { t, date: cfg.saverClock ? dateText(d) : "", key: `${t.time}${t.suffix}|${cfg.saverClock ? dateText(d) : ""}` };
   }
   const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
-  const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
-  // ---- the whirlpool between minutes ---------------------------------------------
-  // When the minute changes, every particle spirals into a spinning sphere in the middle
-  // of the screen, then flies out into the new time and date.
-  const GATHER = 1300, SPIN = 1100, RELEASE = 1700, LAG = 350;  // ms
-  let vortex = null;  // {t0, cx, cy, R, ps}
-
-  // Where a particle sits on the sphere `te` ms into the whirlpool. The sphere turns on a
-  // tilted axis, faster at its equator than at its poles, so the bands twist like a
-  // whirlpool; nearer particles are drawn bigger.
-  function onSphere(d, te) {
-    const v = vortex, sec = te / 1000;
-    const lon = d.lon + sec * (2.4 + sec * 0.9) * (1.5 - 0.9 * Math.abs(Math.sin(d.lat)));
-    const x3 = Math.cos(d.lat) * Math.cos(lon), y3 = Math.sin(d.lat), z3 = Math.cos(d.lat) * Math.sin(lon);
-    const tilt = 0.45;
-    const y = y3 * Math.cos(tilt) - z3 * Math.sin(tilt), z = y3 * Math.sin(tilt) + z3 * Math.cos(tilt);
-    return { x: v.cx + v.R * x3, y: v.cy + v.R * y, s: v.ps * (0.55 + 0.45 * (z + 1)) };
-  }
-
-  function retarget(now, w, h, mode) {  // mode: "scatter" | "vortex" | "glide"
-    const scatter = mode === "scatter";
+  function retarget(now, w, h, scatter) {
     const { t, date, key } = stamp(new Date());
     const { pts, size } = layout(t, date, w, h);
     shown = key; shownW = w; shownH = h;
@@ -527,16 +530,6 @@
       plan.set(d, best);
       d.phase = owner.get(best).phase;
     }
-    if (mode === "vortex") {
-      vortex = { t0: now, cx: w / 2, cy: h / 2, R: Math.min(w, h) * 0.2, ps: (size / SUB) * 0.9 };
-      for (const [d, p] of plan) {
-        Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: p.x, ty: p.y, ts: p.s, key: keyOf(p), t0: undefined,
-                           lon: Math.random() * 6.2832, lat: Math.asin(Math.random() * 2 - 1),  // even over the sphere
-                           lagIn: Math.random() * LAG, lagOut: Math.random() * LAG });
-      }
-      return;
-    }
-    vortex = null;
     for (const [d, p] of plan) {
       const key = keyOf(p);
       if (key === d.key && !scatter) continue;
@@ -559,36 +552,25 @@
       return;
     }
     rafId = requestAnimationFrame(draw);
-    if (t - lastFrame < 33) return;  // ~30 fps is plenty
+    // 30 fps while particles glide to a new minute; 20 is plenty for the slow shimmer.
+    if (t - lastFrame < (moving ? 33 : 50)) return;
     lastFrame = t;
+    moving = false;
     const c = ui.canvas, ctx = c.getContext("2d");
     const w = innerWidth, h = innerHeight;
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     const now = performance.now();
-    if (!dots.length) retarget(now, w, h, "scatter");
-    else if (w !== shownW || h !== shownH) retarget(now, w, h, "glide");
-    else if (stamp(new Date()).key !== shown) retarget(now, w, h, "vortex");
-    const te = vortex ? now - vortex.t0 : 0;
-    if (vortex && te > GATHER + SPIN + RELEASE + LAG) {  // whirlpool over: everyone's home
-      for (const d of dots) Object.assign(d, { x: d.tx, y: d.ty, s: d.ts });
-      vortex = null;
+    if (!dots.length || stamp(new Date()).key !== shown || w !== shownW || h !== shownH) {
+      retarget(now, w, h, !dots.length);
     }
     ctx.clearRect(0, 0, w, h);
     const s = (t - startedAt) / 1000;
     // Hundreds of particles: group them by (rounded) colour and fill each group in one go.
     const batches = new Map();
     for (const d of dots) {
-      if (vortex) {
-        // In from where it was, round the sphere, then out to its new spot.
-        const sp = onSphere(d, te);
-        const gin = ease(clamp01((te - d.lagIn) / GATHER));
-        const out = ease(clamp01((te - GATHER - SPIN - d.lagOut) / RELEASE));
-        const x = d.fx + (sp.x - d.fx) * gin, y = d.fy + (sp.y - d.fy) * gin, sz = d.fs + (sp.s - d.fs) * gin;
-        d.x = x + (d.tx - x) * out;
-        d.y = y + (d.ty - y) * out;
-        d.s = sz + (d.ts - sz) * out;
-      } else if (d.t0 !== undefined) {
+      if (d.t0 !== undefined) {
         const p = Math.min(1, Math.max(0, (now - d.t0) / d.dur));
+        if (p < 1) moving = true;
         const k = ease(p);
         d.x = d.fx + (d.tx - d.fx) * k;
         d.y = d.fy + (d.ty - d.fy) * k;

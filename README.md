@@ -158,7 +158,8 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - An update banner when a new version is on GitHub.
 - **Screensaver** (after 5 minutes by default; change it in Settings):
   - It runs on the home screen and on streaming-site menus, but never over a playing video.
-  - The time and date are drawn in hundreds of tiny colour-shifting particles. When the minute changes they all spiral into a spinning whirlpool sphere in the middle of the screen, then fly out into the new time and date; none appear or vanish.
+  - The time and date are drawn in colour-shifting particles. When the minute changes they glide into the new digits; none appear or vanish.
+  - It's kept light: 20 frames a second while the particles only shimmer (30 while they move), and muted trailers playing behind it are paused until you're back.
   - The **Screensaver** button on the remote starts it right away (the turntable if music is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
   - **While music plays** (Spotify, or any site that publishes "now playing" info), it shows a turntable with the album art spinning on the record, plus the song, artist and album.
@@ -167,6 +168,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.
   - While a video plays full screen, the arrows go to the player (seek, volume) as before. Touching the touchpad hands control to the cursor.
 - **No scrollbars** anywhere on the TV (scrolling still works).
+- **Leaving an app frees its memory:** Chromium's back-forward cache and spare renderer are off, so an app's page and process go away when you leave it, and going Home also tells Chromium to drop leftover caches. If Chromium ever discards the TV tab, the box reloads the home screen into it.
 - **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects or an update arrives, and the touchpad cursor.
 - **Phone remote:**
   - It shows what's on the TV and takes on that service's colour.
