@@ -176,8 +176,8 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - Tap to click, double-tap to double-click, drag to scroll whatever is under your finger, long-press then drag to hold the mouse button (seek bars, sliders).
   - Pinch to zoom the picture on the phone (it doesn't change the TV); two fingers move around while zoomed.
   - The bar has Remote (back to the normal remote), Back, Home, Type (the phone keyboard types straight onto the TV, corrections included) and volume.
-  - The Pi streams only while a phone is in mirror mode and its screen is on, at most 12 frames a second and only when the picture changes.
-  - Netflix, Prime Video and JioHotstar video show black in the mirror: their copy protection blocks capturing the picture. Their menus mirror normally.
+  - The Pi streams only while a phone is in mirror mode and its screen is on, at most 10 frames a second and only when the picture changes. While video plays it costs noticeable CPU, so switch back to the remote for long viewing.
+  - Copy-protected shows may appear black in the mirror; menus and trailers mirror normally.
 - **Quiet browser:** Chromium policies (`deploy/chromium-policy.json`) turn off password saving, notification and location prompts, translate bars, sign-in nags and downloads.
 - **No stray cursor:** cage would draw a cursor in the middle of the screen. `deploy/cursors/` is a transparent cursor theme that hides it.
 - **Volume starts at 100% on every boot.** Change it in Settings.

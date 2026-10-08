@@ -41,9 +41,9 @@ KEYS: dict[str, tuple[str, str, int, str]] = {
 }
 MEDIA_ACTIONS = ("playpause", "seek_fwd", "seek_back")
 
-# Screen mirroring (server/mirror.py): half-HD JPEGs are sharp enough on a phone and
-# cheap enough for the Pi to encode.
-SCREENCAST = {"format": "jpeg", "quality": 60, "maxWidth": 1280, "maxHeight": 720, "everyNthFrame": 1}
+# Screen mirroring (server/mirror.py): 960x540 JPEGs are sharp enough on a phone and
+# cheap enough for the Pi to encode next to a playing video.
+SCREENCAST = {"format": "jpeg", "quality": 55, "maxWidth": 960, "maxHeight": 540, "everyNthFrame": 1}
 
 
 class CDPError(Exception):

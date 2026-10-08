@@ -20,7 +20,7 @@ from .browser import Browser, CDPError
 
 log = logging.getLogger("tvbox.mirror")
 
-MAX_FPS = 12
+MAX_FPS = 10
 SEND_TIMEOUT = 1.0  # a phone that can't keep up misses frames instead of stalling the rest
 
 
@@ -30,6 +30,7 @@ class Mirror:
         self.viewers: set[web.WebSocketResponse] = set()
         self._last_frame: bytes | None = None
         self._last_sent = 0.0
+        self._turn = asyncio.Lock()  # Chromium keeps two frames in flight; send them in turn
         browser.on_frame = self._on_frame
 
     async def join(self, ws: web.WebSocketResponse) -> None:
@@ -54,14 +55,15 @@ class Mirror:
         self.browser.spawn(self._deliver(params))
 
     async def _deliver(self, params: dict) -> None:
-        frame = base64.b64decode(params["data"])
-        self._last_frame = frame
-        await asyncio.gather(*(self._send(ws, frame) for ws in list(self.viewers)))
-        wait = self._last_sent + 1 / MAX_FPS - time.monotonic()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        self._last_sent = time.monotonic()
-        await self.browser.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]}, timeout=3)
+        async with self._turn:
+            wait = self._last_sent + 1 / MAX_FPS - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            frame = base64.b64decode(params["data"])
+            self._last_frame = frame
+            await asyncio.gather(*(self._send(ws, frame) for ws in list(self.viewers)))
+            self._last_sent = time.monotonic()
+            await self.browser.send("Page.screencastFrameAck", {"sessionId": params["sessionId"]}, timeout=3)
 
     async def _send(self, ws: web.WebSocketResponse, frame: bytes) -> None:
         if ws.closed:
