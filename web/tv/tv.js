@@ -52,6 +52,8 @@ function render() {
     shade.className = "shade";
     li.append(shade, art(s, "logo"));
     li.addEventListener("click", () => { select(s.id); launch(); });
+    // The remote's touchpad cursor focuses tiles just like the D-pad does.
+    li.addEventListener("mouseenter", () => { focusArea = "tiles"; paintUpdate(); select(s.id); });
     return li;
   }));
   paint(true);
