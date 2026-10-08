@@ -464,8 +464,28 @@
     return { t, date: cfg.saverClock ? dateText(d) : "", key: `${t.time}${t.suffix}|${cfg.saverClock ? dateText(d) : ""}` };
   }
   const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
-  function retarget(now, w, h, scatter) {
+  // ---- the whirlpool between minutes ---------------------------------------------
+  // When the minute changes, every particle spirals into a spinning sphere in the middle
+  // of the screen, then flies out into the new time and date.
+  const GATHER = 1300, SPIN = 1100, RELEASE = 1700, LAG = 350;  // ms
+  let vortex = null;  // {t0, cx, cy, R, ps}
+
+  // Where a particle sits on the sphere `te` ms into the whirlpool. The sphere turns on a
+  // tilted axis, faster at its equator than at its poles, so the bands twist like a
+  // whirlpool; nearer particles are drawn bigger.
+  function onSphere(d, te) {
+    const v = vortex, sec = te / 1000;
+    const lon = d.lon + sec * (2.4 + sec * 0.9) * (1.5 - 0.9 * Math.abs(Math.sin(d.lat)));
+    const x3 = Math.cos(d.lat) * Math.cos(lon), y3 = Math.sin(d.lat), z3 = Math.cos(d.lat) * Math.sin(lon);
+    const tilt = 0.45;
+    const y = y3 * Math.cos(tilt) - z3 * Math.sin(tilt), z = y3 * Math.sin(tilt) + z3 * Math.cos(tilt);
+    return { x: v.cx + v.R * x3, y: v.cy + v.R * y, s: v.ps * (0.55 + 0.45 * (z + 1)) };
+  }
+
+  function retarget(now, w, h, mode) {  // mode: "scatter" | "vortex" | "glide"
+    const scatter = mode === "scatter";
     const { t, date, key } = stamp(new Date());
     const { pts, size } = layout(t, date, w, h);
     shown = key; shownW = w; shownH = h;
@@ -507,6 +527,16 @@
       plan.set(d, best);
       d.phase = owner.get(best).phase;
     }
+    if (mode === "vortex") {
+      vortex = { t0: now, cx: w / 2, cy: h / 2, R: Math.min(w, h) * 0.2, ps: (size / SUB) * 0.9 };
+      for (const [d, p] of plan) {
+        Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: p.x, ty: p.y, ts: p.s, key: keyOf(p), t0: undefined,
+                           lon: Math.random() * 6.2832, lat: Math.asin(Math.random() * 2 - 1),  // even over the sphere
+                           lagIn: Math.random() * LAG, lagOut: Math.random() * LAG });
+      }
+      return;
+    }
+    vortex = null;
     for (const [d, p] of plan) {
       const key = keyOf(p);
       if (key === d.key && !scatter) continue;
@@ -535,15 +565,29 @@
     const w = innerWidth, h = innerHeight;
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     const now = performance.now();
-    if (!dots.length || stamp(new Date()).key !== shown || w !== shownW || h !== shownH) {
-      retarget(now, w, h, !dots.length);
+    if (!dots.length) retarget(now, w, h, "scatter");
+    else if (w !== shownW || h !== shownH) retarget(now, w, h, "glide");
+    else if (stamp(new Date()).key !== shown) retarget(now, w, h, "vortex");
+    const te = vortex ? now - vortex.t0 : 0;
+    if (vortex && te > GATHER + SPIN + RELEASE + LAG) {  // whirlpool over: everyone's home
+      for (const d of dots) Object.assign(d, { x: d.tx, y: d.ty, s: d.ts });
+      vortex = null;
     }
     ctx.clearRect(0, 0, w, h);
     const s = (t - startedAt) / 1000;
     // Hundreds of particles: group them by (rounded) colour and fill each group in one go.
     const batches = new Map();
     for (const d of dots) {
-      if (d.t0 !== undefined) {
+      if (vortex) {
+        // In from where it was, round the sphere, then out to its new spot.
+        const sp = onSphere(d, te);
+        const gin = ease(clamp01((te - d.lagIn) / GATHER));
+        const out = ease(clamp01((te - GATHER - SPIN - d.lagOut) / RELEASE));
+        const x = d.fx + (sp.x - d.fx) * gin, y = d.fy + (sp.y - d.fy) * gin, sz = d.fs + (sp.s - d.fs) * gin;
+        d.x = x + (d.tx - x) * out;
+        d.y = y + (d.ty - y) * out;
+        d.s = sz + (d.ts - sz) * out;
+      } else if (d.t0 !== undefined) {
         const p = Math.min(1, Math.max(0, (now - d.t0) / d.dur));
         const k = ease(p);
         d.x = d.fx + (d.tx - d.fx) * k;
