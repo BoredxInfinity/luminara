@@ -56,6 +56,13 @@ class Auth:
     def _save_tokens(self) -> None:
         _write_private(self._dir / "tokens.json", json.dumps(sorted(self._tokens)))
 
+    def reset(self) -> None:
+        """New PIN, and every paired phone has to pair again."""
+        (self._dir / "pin").unlink(missing_ok=True)
+        self.pin = self._load_pin()
+        self._tokens.clear()
+        self._save_tokens()
+
     # ---- API -------------------------------------------------------------
 
     def is_valid(self, token: str | None) -> bool:

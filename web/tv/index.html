@@ -27,6 +27,15 @@
   </header>
 
   <main>
+    <div id="update" class="update" hidden>
+      <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+      <div class="update-text">
+        <strong>Update available</strong>
+        <span id="update-detail" class="muted"></span>
+      </div>
+      <button id="update-install" class="btn primary" data-act="install">Install now</button>
+      <button id="update-later" class="btn" data-act="later">Later</button>
+    </div>
     <section class="hero" aria-live="polite">
       <p id="hero-eyebrow" class="eyebrow"></p>
       <h2 id="hero-title"></h2>
@@ -55,9 +64,6 @@
     <p class="splash-note">Opening…</p>
   </div>
 
-  <div id="saver" class="saver" aria-hidden="true">
-    <div class="saver-clock"><time></time><p></p></div>
-  </div>
 
   <p id="status" class="status" hidden>Reconnecting…</p>
   <script src="/tv/tv.js"></script>

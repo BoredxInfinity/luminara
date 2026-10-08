@@ -52,5 +52,18 @@
              "bg": "#fff", "size": "70%"},
     "user_agent": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.0 TV Safari/537.36",
     "keys": {"playpause": "mediaplaypause", "back": "escape"}
+  },
+  {
+    "id": "spotify",
+    "name": "Spotify",
+    "tagline": "Music and podcasts · or pick “Web Player” in your phone’s Spotify app",
+    "url": "https://open.spotify.com/",
+    "match": ["spotify.com"],
+    "glyph": "S",
+    "color": "#1ed760",
+    "tile": "radial-gradient(120% 140% at 50% 0%, #0d3b1f 0%, #050806 70%)",
+    "logo": {"url": "https://upload.wikimedia.org/wikipedia/commons/2/26/Spotify_logo_with_text.svg"},
+    "icon": {"url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/5f/b6/e0/5fb6e0c6-cea6-e107-8d54-8e8fcec573ce/AppIcon-0-0-1x_U007epad-0-1-0-0-sRGB-85-220.png/256x256bb.png", "bg": "#1ed760"},
+    "keys": {"playpause": "space", "seek_fwd": "shift+right", "seek_back": "shift+left"}
   }
 ]

@@ -125,12 +125,17 @@ function paintIcon(el, s) {
 
 // ---- services & state ------------------------------------------------------
 
+let renderedHidden = "";
 function renderServices() {
-  $("apps").replaceChildren(...services.map((s, i) => {
+  const hidden = new Set(state.settings?.hidden_apps || []);
+  renderedHidden = JSON.stringify([...hidden]);
+  const visible = services.filter((s) => !hidden.has(s.id));
+  $("apps").style.setProperty("--cols", String(Math.min(Math.max(visible.length, 1), 5)));
+  $("apps").replaceChildren(...visible.map((s) => {
     const b = document.createElement("button");
     b.className = "app";
     b.style.setProperty("--c", s.color);
-    b.dataset.index = i;
+    b.dataset.id = s.id;
     const icon = document.createElement("span");
     icon.className = "app-icon";
     paintIcon(icon, s);
@@ -171,11 +176,13 @@ function paintState() {
   }
 
   for (const b of $("apps").children) {
-    const s = services[Number(b.dataset.index)];
-    b.classList.toggle("active", state.view === "service" && s.id === state.service_id);
-    b.classList.toggle("selected", state.view === "launcher" && Number(b.dataset.index) === state.selected);
-    b.classList.toggle("launching", launching === s.id && state.service_id !== s.id);
+    const id = b.dataset.id;
+    b.classList.toggle("active", state.view === "service" && id === state.service_id);
+    b.classList.toggle("selected", state.view === "launcher" && id === state.selected);
+    b.classList.toggle("launching", launching === id && state.service_id !== id);
   }
+
+  paintUpdateBanner();
 
   const meter = $("vol-meter");
   const known = state.volume != null;
@@ -191,7 +198,9 @@ function connect() {
     if (msg.t === "state") {
       if (launching && msg.service_id === launching) launching = null;
       state = msg;
+      if (JSON.stringify(msg.settings?.hidden_apps || []) !== renderedHidden) renderServices();
       paintState();
+      window.onTvState?.(msg);  // settings.js keeps its panel in sync
     }
   };
   ws.onopen = paintState;
@@ -200,6 +209,25 @@ function connect() {
     if (paired) setTimeout(connect, 1500);
   };
 }
+
+// ---- update banner ---------------------------------------------------------------
+
+function paintUpdateBanner() {
+  const u = state.update || {};
+  const show = Boolean((u.available && u.latest !== state.settings?.update_dismissed) || u.installing);
+  $("update-card").hidden = !show;
+  if (!show) return;
+  const n = (u.commits || []).length;
+  $("update-sub").textContent = u.installing ? "Installing… the TV will restart in a moment"
+    : u.error ? u.error : `${n} change${n === 1 ? "" : "s"} · ${(u.commits || [])[0]?.subject || ""}`;
+  $("update-install").disabled = $("update-later").disabled = Boolean(u.installing);
+}
+$("update-install").addEventListener("click", async () => {
+  buzz(15);
+  const res = await api("/api/update/install");
+  if (res && res.ok) toast("Installing the update…");
+});
+$("update-later").addEventListener("click", () => { buzz(); api("/api/update/dismiss"); });
 
 // ---- buttons -----------------------------------------------------------------
 

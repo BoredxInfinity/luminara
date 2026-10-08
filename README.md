@@ -1,6 +1,6 @@
 # Luminara: Pi TV Box
 
-This turns a Raspberry Pi 4 (2 GB) into a streaming box for Netflix, Prime Video, JioHotstar and YouTube. Any phone or laptop on the home Wi-Fi can be the remote.
+This turns a Raspberry Pi 4 (2 GB) into a streaming box for Netflix, Prime Video, JioHotstar, YouTube and Spotify. Any phone or laptop on the home Wi-Fi can be the remote.
 
 ```
  phone / laptop ──HTTP + WebSocket──▶  controller (Python, :8080)  ──CDP, localhost:9222──▶  Chromium (kiosk, in cage)
@@ -124,12 +124,14 @@ The TV boots straight to the launcher. Scan the QR code with your phone and the 
 git add -A && git commit -m "Describe the change" && git push
 ```
 
-**3. Apply on the Pi:**
-```bash
-ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
-```
+**3. Install it on the Pi.** Either:
+- **Do nothing, then confirm.** The box checks GitHub shortly after it starts and then every 6 hours. When there's something new, the TV home screen and the phone remote show **Update available** with **Install now** and **Later** buttons. On the TV, press ▲ from the tiles to reach them. **Settings → Updates → Check now** checks straight away.
+- **Or run it by hand:**
+  ```bash
+  ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
+  ```
 
-`update.sh` pulls and then applies only what changed:
+Both paths run `update.sh`. Installing from the TV or phone goes through `tvbox-update.service`, which runs as root, so it never asks for a password. `update.sh` pulls and then applies only what changed:
 
 | You changed | What `update.sh` does |
 |---|---|
@@ -138,6 +140,8 @@ ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
 | `requirements.txt` | Installs the new Python packages first |
 | `install.sh`, `deploy/*.service`, `deploy/pam-*` | Re-runs `sudo ./install.sh`, which applies everything |
 | Nothing new | Nothing (use `./update.sh --force` to restart anyway) |
+
+The installed version is recorded separately from the downloaded one, in `.git/tvbox-applied`. If the power goes off mid-update, the box still offers to finish it next time.
 
 **Don't edit files on the Pi.** `update.sh` refuses to run if the clone has local changes, so the Pi always matches GitHub. To get back to the GitHub version: `git checkout -- . && ./update.sh`.
 
@@ -151,8 +155,13 @@ ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
   - "Jump back in" focuses the service you opened last.
   - A short opening animation plays when a service starts.
   - A count of connected remotes.
-  - A drifting-clock screensaver after 3 minutes, so OLED TVs don't get burn-in.
-- **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects, and the touchpad cursor.
+  - An update banner when a new version is on GitHub.
+- **Screensaver** (after 5 minutes by default; change it in Settings):
+  - It runs on the home screen and on streaming-site menus, but never over a playing video.
+  - It's a grid of colour-shifting dots pulsing in slow ripples, with the time.
+  - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
+  - **While music plays** (Spotify, or any site that publishes "now playing" info), it shows a turntable with the album art spinning on the record, plus the song, artist and album.
+- **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects or an update arrives, and the touchpad cursor.
 - **Phone remote:**
   - It shows what's on the TV and takes on that service's colour.
   - Service tiles use the real app icons.
@@ -161,7 +170,25 @@ ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
   - "Add to Home Screen" gives it an app icon.
 - **Quiet browser:** Chromium policies (`deploy/chromium-policy.json`) turn off password saving, notification and location prompts, translate bars, sign-in nags and downloads.
 - **No stray cursor:** cage would draw a cursor in the middle of the screen. `deploy/cursors/` is a transparent cursor theme that hides it.
-- **Volume starts at 100% on every boot.** Change it with `TVBOX_BOOT_VOLUME`; `0` leaves it alone.
+- **Volume starts at 100% on every boot.** Change it in Settings.
+- **Less lag on Netflix and Prime:**
+  - **Smooth video** (on by default) hides VP9/AV1 support from websites, so they send H.264. The Pi decodes H.264 in hardware but VP9/AV1 slowly in software, which is the main cause of stutter.
+  - **Lite browser** (on by default) runs Chromium with fewer processes and no per-site isolation, which saves a lot of memory on 2 GB.
+  - Both are switches in Settings.
+
+## Settings (gear icon on the remote)
+
+| Section | What you can change |
+|---|---|
+| Apps | Show or hide each app on the TV and remote |
+| Screensaver | Off / 1–30 minutes, show the time, preview it on the TV |
+| Sound | Volume when the box starts (or leave it as it was) |
+| Performance | Smooth video (H.264), Lite browser (applies after **Restart TV display**) |
+| Updates | Check automatically, Check now, Install |
+| Phones | The PIN for pairing another phone; **Forget all phones** (new PIN) |
+| About | Name, address, version, memory use, temperature, uptime; **Restart TV display** |
+
+Settings are saved on the box (`~/.local/state/tvbox/settings.json`) and apply to every phone straight away.
 
 Logos and icons aren't stored in this repo. The Pi downloads them from Wikimedia Commons and the App Store, using the URLs in `services.json`, and caches them in `~/.local/state/tvbox/logos/`. Until a logo is available, the tile shows the service's letter instead.
 
@@ -172,7 +199,8 @@ Logos and icons aren't stored in this repo. The Pi downloads them from Wikimedia
 | Service icons | Opens the service (with an opening animation on the TV) |
 | Home / Back | Launcher / previous page (on YouTube, Back is the TV app's own back) |
 | D-pad, OK, Esc | Arrow keys, Enter, Escape. Tap a direction or swipe anywhere on the pad; hold to repeat |
-| ⏪ ⏯ ⏩ | Seek / play-pause (per-service keys come from `services.json`) |
+| ⏪ ⏯ ⏩ | Seek / play-pause (per-service keys come from `services.json`; Spotify seeks with Shift+arrow) |
+| ⚙ | Settings |
 | Touchpad tab | Drag to move a cursor on the TV, tap to click, two fingers to scroll |
 | Keyboard tab | Types into whatever is focused on the TV |
 | Laptop keyboard | Arrows, Enter, Esc, Backspace (Back) and Space (play/pause) are forwarded |
@@ -199,18 +227,19 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 ```
 
 - `match` lists the domains used to work out which service is on screen. `logo` is the wordmark on the TV tile; `icon` is the square app icon on the remote. Options: `filter: "white"` makes the logo white, and `recolor` swaps SVG colours. Square App Store icons come from `https://itunes.apple.com/search?entity=software&term=<name>` (use `artworkUrl512`).
-- `keys` and `user_agent` are optional.
+- `keys` and `user_agent` are optional. Keys can include modifiers, for example `"shift+right"`.
 
 ## Housekeeping (on the Pi)
 
 - **Logs:** `journalctl -u tvbox-server -u tvbox-kiosk -f`
-- **Reset the PIN and forget all remotes:** `rm ~/.local/state/tvbox/{pin,tokens.json} && sudo systemctl restart tvbox-server`
+- **Update logs:** `journalctl -u tvbox-update`
+- **Reset the PIN and forget all remotes:** use **Settings → Phones → Forget all phones**.
 - **Turn off the PIN:** add `Environment=TVBOX_PIN=0` to `deploy/tvbox-server.service`, then push and update.
-- **Audio goes to the wrong output:** run `wpctl status`, then `wpctl set-default <id of the HDMI sink>`.
+- **Audio goes to the wrong output:** HDMI is preferred automatically (`deploy/wireplumber-hdmi.conf`). To override it, run `wpctl status`, then `wpctl set-default <id>`.
 - **Sign out of every streaming service:** run `sudo systemctl stop tvbox-kiosk && rm -rf ~/.config/tvbox-chromium && sudo systemctl start tvbox-kiosk`.
 - **Uninstall:**
   ```bash
-  sudo systemctl disable --now tvbox-kiosk tvbox-server && sudo rm /etc/systemd/system/tvbox-*.service /etc/sudoers.d/tvbox /etc/pam.d/tvbox-kiosk && sudo systemctl enable getty@tty1
+  sudo systemctl disable --now tvbox-kiosk tvbox-server && sudo rm /etc/systemd/system/tvbox-*.service /etc/sudoers.d/tvbox /etc/pam.d/tvbox-kiosk /etc/chromium/policies/managed/tvbox.json && sudo systemctl enable getty@tty1
   ```
 
 ## Security
@@ -220,11 +249,12 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 - The API rejects cross-origin requests, so a website open on the TV can't drive the box through localhost.
 - The remote uses plain HTTP. That's fine at home. If you'd rather not type passwords over Wi-Fi, plug a USB keyboard into the Pi for the one-time logins.
 - Don't port-forward 8080.
-- `install.sh` gives your user password-less `sudo` for exactly four commands: reboot, poweroff, and restarting the two tvbox services.
+- `install.sh` gives your user password-less `sudo` for exactly five commands: reboot, poweroff, restarting the two tvbox services, and starting `tvbox-update.service`.
+- **Self-update trusts your GitHub repo.** `tvbox-update.service` runs as root and applies whatever is on the `main` branch once you tap Install, so anyone who can push to the repo can run code on the box. Keep 2-factor authentication on the GitHub account.
 
 ## Reference
 
-Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`), `TVBOX_DATA_DIR` (`~/.local/state/tvbox`), `TVBOX_SERVICES`, `TVBOX_PIN` (`0` turns it off), `TVBOX_BOOT_VOLUME` (100; `0` leaves the volume alone).
+Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`), `TVBOX_DATA_DIR` (`~/.local/state/tvbox`), `TVBOX_SERVICES`, `TVBOX_PIN` (`0` turns it off), `TVBOX_BOOT_VOLUME` (the default for the Settings value).
 
 | Path | Contents |
 |---|---|
@@ -236,8 +266,11 @@ Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`
 | `web/tv/` | launcher shown on the TV |
 | `web/remote/` | phone remote |
 | `server/logos.py` | downloads and caches service logos and icons |
-| `web/inject/overlay.js` | cursor dot, volume bar and toasts, injected into every page |
-| `deploy/` | systemd units, cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
+| `server/settings.py` | settings from the remote's panel |
+| `server/updater.py` | checks GitHub, starts installs |
+| `web/inject/overlay.js` | injected into every page: H.264 steering, screensaver, cursor, volume bar, toasts |
+| `web/remote/settings.js` | the Settings panel |
+| `deploy/` | systemd units (incl. `tvbox-update.service`), cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
 | `install.sh` | one-time Pi setup |
 | `update.sh` | pull and apply on the Pi |
 | `scripts/dev.sh` | run everything on the laptop |

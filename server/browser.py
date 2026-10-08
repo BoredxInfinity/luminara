@@ -79,12 +79,22 @@ class Pointer:
         return nx, ny
 
 
+MODIFIERS = {"alt": 1, "ctrl": 2, "meta": 4, "shift": 8}  # CDP Input modifier bits
+
+
+def parse_combo(combo: str) -> tuple[int, str]:
+    """'shift+right' -> (8, 'right'). Raises KeyError for unknown keys or modifiers."""
+    *mods, key = combo.lower().split("+")
+    if key not in KEYS or any(m not in MODIFIERS for m in mods):
+        raise KeyError(combo)
+    return sum(MODIFIERS[m] for m in set(mods)), key
+
+
 def resolve_key(name: str, service: Service | None) -> str:
-    """Map a remote key name (including media actions) to an entry in KEYS."""
+    """Map a remote key name (including media actions) to a key combo like 'shift+right'."""
     if name in MEDIA_ACTIONS:
         name = service.media_key(name) if service else DEFAULT_MEDIA_KEYS[name]
-    if name not in KEYS:
-        raise KeyError(name)
+    parse_combo(name)  # validate
     return name
 
 
@@ -110,6 +120,8 @@ class Browser:
         self._default_ua: str = ""
         self._ua_applied: str | None = None
         self._popups: set[str] = set()
+        self.page_config: dict = {}  # handed to overlay.js as window.__tvboxConfig
+        self._script_id: str | None = None
         self._tasks: set[asyncio.Task] = set()
         self._moving = False
         self._runner: asyncio.Task | None = None
@@ -148,6 +160,7 @@ class Browser:
         self._ws = None
         self._session = self._target = None
         self._ua_applied = None
+        self._script_id = None
         self._popups.clear()
         for fut in self._pending.values():
             if not fut.done():
@@ -244,8 +257,9 @@ class Browser:
         # Without this, an unfocused window drops synthetic mouse presses (and some
         # players pause on blur). Under cage the window is focused anyway; this is cheap.
         await self.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
-        await self.send("Page.addScriptToEvaluateOnNewDocument", {"source": OVERLAY_JS})
-        await self.send("Runtime.evaluate", {"expression": OVERLAY_JS})
+        await self._register_overlay()
+        await self.send("Runtime.evaluate", {"expression": self._overlay_source()})
+        await self.send("Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.osd({kind: 'ready'})"})
         await self._refresh_viewport()
         self._update(cdp=True, **self._describe(target["url"], target.get("title", "")))
         await self._apply_user_agent(service_for_url(self.services, target["url"]))
@@ -254,6 +268,7 @@ class Browser:
     async def _reattach(self) -> None:
         self._session = self._target = None
         self._ua_applied = None
+        self._script_id = None
         try:
             await self._attach()
         except CDPError as exc:
@@ -352,15 +367,35 @@ class Browser:
         else:
             await self.press(resolve_key(name, self.current_service()))
 
-    async def press(self, name: str) -> None:
+    async def press(self, combo: str) -> None:
+        mods, name = parse_combo(combo)
         key, code, vk, text = KEYS[name]
-        down = {"type": "keyDown" if text else "rawKeyDown", "key": key, "code": code,
-                "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk}
+        if mods & ~MODIFIERS["shift"]:
+            text = ""  # Ctrl/Alt/Meta shortcuts don't type anything
+        base = {"key": key, "code": code, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk, "modifiers": mods}
+        down = {"type": "keyDown" if text else "rawKeyDown", **base}
         if text:
             down["text"] = down["unmodifiedText"] = text
         await self.send("Input.dispatchKeyEvent", down)
-        await self.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": key, "code": code,
-                                                   "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+        await self.send("Input.dispatchKeyEvent", {"type": "keyUp", **base})
+
+    def _overlay_source(self) -> str:
+        # The config must exist before the overlay runs: it patches codec checks at page start.
+        return f"window.__tvboxConfig = {json.dumps(self.page_config)};\n{OVERLAY_JS}"
+
+    async def _register_overlay(self) -> None:
+        if self._script_id:
+            await self.send("Page.removeScriptToEvaluateOnNewDocument", {"identifier": self._script_id})
+        res = await self.send("Page.addScriptToEvaluateOnNewDocument", {"source": self._overlay_source()})
+        self._script_id = res.get("identifier")
+
+    async def configure(self, config: dict) -> None:
+        """New settings for overlay.js: future pages get them at load, the current page right away."""
+        self.page_config = config
+        if not self._session:
+            return
+        await self._register_overlay()
+        await self.send("Runtime.evaluate", {"expression": f"window.__tvbox && window.__tvbox.configure({json.dumps(config)})"})
 
     async def osd(self, message: dict) -> None:
         expr = f"window.__tvbox && window.__tvbox.osd({json.dumps(message)})"

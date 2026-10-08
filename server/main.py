@@ -19,9 +19,11 @@ from aiohttp import WSCloseCode, WSMsgType, web
 
 from .auth import COOKIE, Auth, Locked
 from .browser import KEYS, MEDIA_ACTIONS, Browser, CDPError
-from .config import WEB_DIR, Settings, load_services, load_settings
+from .config import ROOT, WEB_DIR, Settings, load_services, load_settings
 from .logos import Logos
-from .system import System
+from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
+from .system import System, system_info
+from .updater import Updater
 
 log = logging.getLogger("tvbox")
 
@@ -37,18 +39,22 @@ class Hub:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.services = load_services(settings.services_file)
+        self.prefs = UserSettings(settings.data_dir, {s.id for s in self.services}, settings.boot_volume)
         self.auth = Auth(settings.data_dir) if settings.pin_enabled else None
         self.system = System()
         self.logos = Logos(settings.data_dir, self.services)
+        self.updater = Updater(ROOT, settings.data_dir)
         self.browser = Browser(settings, self.services, self.on_browser_change)
+        self.browser.page_config = self.page_config()
         self.clients: dict[web.WebSocketResponse, str] = {}  # socket -> "tv" | "remote"
         self.volume = {"volume": None, "muted": False}
         self.http: aiohttp.ClientSession | None = None
         self.jobs: list[asyncio.Task] = []
         self._recent_file = settings.data_dir / "recent.json"
         self.recent: dict[str, int] = self._load_recent()  # service id -> last opened (epoch s)
-        self.selected = self._index(max(self.recent, key=self.recent.get, default=None))
+        self.selected = max(self.recent, key=self.recent.get, default=self.services[0].id)  # focused tile
         self._service_on_screen: str | None = None
+        self._announced_update = ""
         self._qr: tuple[str, str] | None = None  # (url, svg)
 
     # ---- state ----------------------------------------------------------
@@ -58,7 +64,8 @@ class Hub:
 
     def snapshot(self) -> dict:
         return {**self.browser.state, "selected": self.selected, **self.volume,
-                "remotes": self.remote_count(), "recent": self.recent}
+                "remotes": self.remote_count(), "recent": self.recent,
+                "settings": self.prefs.values, "update": self.updater.status}
 
     async def broadcast(self) -> None:
         if not self.clients:
@@ -76,7 +83,7 @@ class Hub:
         if sid and sid != self._service_on_screen:
             # Remember what was opened, and focus its tile when we come back home.
             self.recent[sid] = int(time.time())
-            self.selected = self._index(sid)
+            self.selected = sid
             self._save_recent()
         self._service_on_screen = sid
         await self.broadcast()
@@ -86,13 +93,13 @@ class Hub:
         if self.browser.state.get("cdp"):
             self.browser.spawn(self.browser.osd(message))
 
-    def _index(self, sid: str | None) -> int:
-        return next((i for i, s in enumerate(self.services) if s.id == sid), 0)
+    def service(self, sid: str):
+        return next((s for s in self.services if s.id == sid), None)
 
     def _load_recent(self) -> dict[str, int]:
         try:
             data = json.loads(self._recent_file.read_text())
-            return {k: int(v) for k, v in data.items() if any(s.id == k for s in self.services)}
+            return {k: int(v) for k, v in data.items() if self.service(k)}
         except (FileNotFoundError, ValueError, AttributeError):
             return {}
 
@@ -101,11 +108,53 @@ class Hub:
         tmp.write_text(json.dumps(self.recent))
         tmp.replace(self._recent_file)
 
+    # ---- settings -------------------------------------------------------
+
+    def page_config(self) -> dict:
+        """The settings overlay.js needs inside every page."""
+        p = self.prefs
+        return {"preferH264": p["prefer_h264"], "saverMinutes": p["saver_minutes"], "saverClock": p["saver_clock"]}
+
+    def write_chromium_env(self) -> None:
+        """deploy/kiosk.sh sources this when Chromium starts."""
+        path = self.settings.data_dir / "chromium.env"
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(self.prefs.chromium_env())
+        tmp.replace(path)
+
+    async def apply_settings(self, changed: set[str]) -> None:
+        if changed & {"prefer_h264", "saver_minutes", "saver_clock"}:
+            self.browser.spawn(self.browser.configure(self.page_config()))
+        if changed & NEEDS_DISPLAY_RESTART:
+            self.write_chromium_env()
+        await self.broadcast()
+
+    # ---- updates --------------------------------------------------------
+
+    async def on_update_status(self) -> None:
+        st = self.updater.status
+        if st["available"] and st["latest"] not in (self._announced_update, self.prefs["update_dismissed"]):
+            self._announced_update = st["latest"]
+            if self.browser.state.get("view") != "launcher":  # the launcher shows its own banner
+                self.osd(kind="toast", icon="update", text="Update available · install it from Settings on your phone")
+        await self.broadcast()
+
+    async def announce_restart(self) -> None:
+        """After an update restarted us, say so on the TV once the browser is back."""
+        if not self.updater.status["just_updated"]:
+            return
+        for _ in range(60):
+            if self.browser.state.get("cdp"):
+                await asyncio.sleep(2)  # let the page settle
+                self.osd(kind="toast", icon="update", text=f"Updated · {self.updater.status['current_subject'][:60]}")
+                return
+            await asyncio.sleep(1)
+
     # ---- startup jobs ---------------------------------------------------
 
     async def apply_boot_volume(self) -> None:
         """Set the boot volume once per boot (marker lives in tmpfs), not on every restart."""
-        level = self.settings.boot_volume
+        level = self.prefs["boot_volume"]
         if not level or not self.system.has_audio:
             return
         marker = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "tvbox-boot-volume"
@@ -255,13 +304,12 @@ async def services(request: web.Request):
 @routes.post("/api/launch/{id}")
 async def launch(request: web.Request):
     hub = request.app[HUB]
-    sid = request.match_info["id"]
-    svc = next((s for s in hub.services if s.id == sid), None)
+    svc = hub.service(request.match_info["id"])
     if not svc:
-        raise web.HTTPNotFound(text=f"unknown service {sid!r}")
+        raise web.HTTPNotFound(text="unknown service")
     if hub.browser.state.get("view") == "launcher":
         # Let the launcher play its opening animation before the page changes.
-        await hub.send_to("tv", {"t": "launch", "id": sid})
+        await hub.send_to("tv", {"t": "launch", "id": svc.id})
         await asyncio.sleep(0.45)
     await hub.browser.launch(svc)
     return ok()
@@ -340,6 +388,91 @@ async def pair(request: web.Request):
     return resp
 
 
+# ---- settings, system, updates ----------------------------------------------
+
+@routes.get("/api/settings")
+async def get_settings(request: web.Request):
+    return web.json_response({"values": request.app[HUB].prefs.values,
+                              "choices": {"saver_minutes": SAVER_CHOICES, "boot_volume": VOLUME_CHOICES}})
+
+
+@routes.post("/api/settings")
+async def set_settings(request: web.Request):
+    hub = request.app[HUB]
+    try:
+        changed = hub.prefs.update(await read_json(request))
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    await hub.apply_settings(changed)
+    return ok(values=hub.prefs.values, restart_display=bool(changed & NEEDS_DISPLAY_RESTART))
+
+
+@routes.get("/api/system")
+async def get_system(request: web.Request):
+    hub = request.app[HUB]
+    return web.json_response({
+        **system_info(),
+        "hostname": socket.gethostname().split(".")[0], "ip": lan_ip(), "port": hub.settings.port,
+        "pin": hub.auth.pin if hub.auth else None,  # paired phones may show it to pair another
+        "version": hub.updater.status["current"], "version_subject": hub.updater.status["current_subject"],
+    })
+
+
+@routes.post("/api/display/restart")
+async def restart_display(request: web.Request):
+    try:
+        await request.app[HUB].system.restart_display()
+    except RuntimeError as exc:
+        return fail(str(exc), 500)
+    return ok()
+
+
+@routes.post("/api/saver/preview")
+async def saver_preview(request: web.Request):
+    await request.app[HUB].browser.send(
+        "Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.saver(true)"}, timeout=3)
+    return ok()
+
+
+@routes.post("/api/pin/reset")
+async def reset_pin(request: web.Request):
+    hub = request.app[HUB]
+    if not hub.auth:
+        return fail("the PIN is turned off", 400)
+    hub.auth.reset()
+    hub._qr = None
+    await hub.send_to("tv", {"t": "repaired"})  # the launcher reloads its QR code and PIN
+    return ok()
+
+
+@routes.post("/api/update/check")
+async def update_check(request: web.Request):
+    hub = request.app[HUB]
+    await hub.updater.check()
+    await hub.on_update_status()
+    return ok(update=hub.updater.status)
+
+
+@routes.post("/api/update/install")
+async def update_install(request: web.Request):
+    hub = request.app[HUB]
+    try:
+        await hub.updater.install()
+    except RuntimeError as exc:
+        return fail(str(exc), 400)
+    hub.osd(kind="updating")
+    await hub.broadcast()
+    return ok()
+
+
+@routes.post("/api/update/dismiss")
+async def update_dismiss(request: web.Request):
+    hub = request.app[HUB]
+    hub.prefs.update({"update_dismissed": hub.updater.status["latest"]})
+    await hub.broadcast()
+    return ok()
+
+
 # ---- WebSocket --------------------------------------------------------------
 
 @routes.get("/ws")
@@ -370,8 +503,8 @@ async def ws_handler(request: web.Request):
                     browser.spawn(browser.click())
                 elif kind == "scroll":
                     browser.spawn(browser.scroll(_clamp(data["dy"])))
-                elif kind == "select":
-                    hub.selected = max(0, min(len(hub.services) - 1, int(data["index"])))
+                elif kind == "select" and hub.service(str(data["id"])):
+                    hub.selected = str(data["id"])
                     await hub.broadcast()
             except (ValueError, KeyError, TypeError, AttributeError):
                 log.debug("ignoring bad ws message: %.80s", msg.data)
@@ -397,9 +530,16 @@ async def _no_stale_assets(request: web.Request, response: web.StreamResponse) -
 async def _startup(app: web.Application) -> None:
     hub = app[HUB]
     hub.http = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_ssl_context()))
+    hub.write_chromium_env()
     hub.volume = await hub.system.volume()
+    await hub.updater.startup()
     hub.browser.start()
-    hub.jobs = [asyncio.create_task(hub.apply_boot_volume()), asyncio.create_task(hub.logos.prefetch(hub.http))]
+    hub.jobs = [
+        asyncio.create_task(hub.apply_boot_volume()),
+        asyncio.create_task(hub.logos.prefetch(hub.http)),
+        asyncio.create_task(hub.announce_restart()),
+        asyncio.create_task(hub.updater.run_periodic(lambda: hub.prefs["auto_update_check"], hub.on_update_status)),
+    ]
 
 
 def _ssl_context() -> ssl.SSLContext:

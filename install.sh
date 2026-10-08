@@ -20,7 +20,8 @@ done
 say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 [[ $EUID -eq 0 ]] || { echo "run with sudo: sudo ./install.sh" >&2; exit 1; }
-TV_USER="${SUDO_USER:-}"
+# Run by hand with sudo, or by tvbox-update.service (root, no SUDO_USER): the clone's owner runs the TV.
+TV_USER="${SUDO_USER:-$(stat -c %U "$APP_DIR")}"
 [[ -n "$TV_USER" && "$TV_USER" != root ]] || { echo "run with sudo from your normal user account" >&2; exit 1; }
 TV_UID="$(id -u "$TV_USER")"
 TV_HOME="$(getent passwd "$TV_USER" | cut -d: -f6)"
@@ -43,15 +44,17 @@ say "Python environment ($APP_DIR/.venv)"
 [[ -x "$APP_DIR/.venv/bin/python" ]] || as_user python3 -m venv "$APP_DIR/.venv"
 as_user "$APP_DIR/.venv/bin/pip" install --quiet --disable-pip-version-check -r "$APP_DIR/requirements.txt"
 chmod +x "$APP_DIR/install.sh" "$APP_DIR/update.sh" "$APP_DIR/deploy/kiosk.sh" "$APP_DIR/deploy/kiosk-session.sh"
+export DEBIAN_FRONTEND=noninteractive  # also runs unattended from tvbox-update.service
 
 say "Audio, power and login for $TV_USER"
 # PipeWire runs as a user service; lingering starts it at boot without a login.
 loginctl enable-linger "$TV_USER"
-# Exactly what the remote's power buttons and ./update.sh need, without a password.
+# Exactly what the remote's buttons and ./update.sh need, without a password.
 SUDOERS=/etc/sudoers.d/tvbox
 cat > "$SUDOERS.tmp" <<EOF
 $TV_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, \\
-  /usr/bin/systemctl restart tvbox-server, /usr/bin/systemctl restart tvbox-kiosk
+  /usr/bin/systemctl restart tvbox-server, /usr/bin/systemctl restart tvbox-kiosk, \\
+  /usr/bin/systemctl start --no-block tvbox-update.service
 EOF
 chmod 0440 "$SUDOERS.tmp"
 visudo -cf "$SUDOERS.tmp" >/dev/null && mv "$SUDOERS.tmp" "$SUDOERS"
@@ -63,7 +66,7 @@ mkdir -p /etc/chromium/policies/managed
 ln -sf "$APP_DIR/deploy/chromium-policy.json" /etc/chromium/policies/managed/tvbox.json
 
 say "systemd services"
-for unit in tvbox-server.service tvbox-kiosk.service; do
+for unit in tvbox-server.service tvbox-kiosk.service tvbox-update.service; do
   sed -e "s|@USER@|$TV_USER|g" -e "s|@UID@|$TV_UID|g" -e "s|@APP_DIR@|$APP_DIR|g" \
     "$APP_DIR/deploy/$unit" > "/etc/systemd/system/$unit"
 done
@@ -97,6 +100,9 @@ fi
 for svc in tvbox-server tvbox-kiosk; do
   if systemctl is-active --quiet "$svc"; then systemctl restart "$svc"; fi
 done
+
+# Everything in this checkout is now in effect (update.sh compares against this).
+as_user sh -c "git -C '$APP_DIR' rev-parse HEAD > '$APP_DIR/.git/tvbox-applied'" || true
 
 IP="$(hostname -I | awk '{print $1}')"
 say "Done"

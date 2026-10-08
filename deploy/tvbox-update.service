@@ -1,0 +1,11 @@
+[Unit]
+Description=TV box self-update (pull from GitHub and apply)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Started on demand by the controller when you confirm "Install" (sudoers rule from install.sh).
+# Runs as root so it can apply system-level changes; git and pip run as the repo's owner.
+Type=oneshot
+ExecStart=@APP_DIR@/update.sh --service
+TimeoutStartSec=30min

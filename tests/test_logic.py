@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from server.auth import LOCKOUT_SECONDS, MAX_FAILURES, Auth, Locked
-from server.browser import Pointer, resolve_key
+from server.browser import Pointer, parse_combo, resolve_key
 from server.config import ROOT, load_services, load_settings, service_for_url
 from server.system import parse_volume
 
@@ -27,7 +27,7 @@ def test_service_for_url(url, expected):
 
 
 def test_services_have_unique_ids_and_urls():
-    assert len(BY_ID) == len(SERVICES) == 4
+    assert len(BY_ID) == len(SERVICES) == 5
     assert all(s.url.startswith("https://") for s in SERVICES)
 
 
@@ -37,8 +37,18 @@ def test_media_keys_default_and_override():
     assert resolve_key("playpause", BY_ID["youtube"]) == "mediaplaypause"
     assert resolve_key("playpause", None) == "space"
     assert resolve_key("up", None) == "up"
+    assert resolve_key("seek_fwd", BY_ID["spotify"]) == "shift+right"
     with pytest.raises(KeyError):
         resolve_key("nope", None)
+
+
+def test_parse_combo():
+    assert parse_combo("right") == (0, "right")
+    assert parse_combo("shift+right") == (8, "right")
+    assert parse_combo("Ctrl+Shift+left") == (10, "left")
+    for bad in ("hyper+right", "shift+nope", ""):
+        with pytest.raises(KeyError):
+            parse_combo(bad)
 
 
 def test_pointer_coalesces_and_clamps():

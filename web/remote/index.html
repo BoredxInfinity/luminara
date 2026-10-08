@@ -20,10 +20,20 @@
       <span id="now-view" class="now-view"><i id="conn" class="conn"></i><span>Connecting…</span></span>
       <span id="now-title" class="now-title">Luminara</span>
     </div>
+    <button id="settings-btn" class="icon-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
     <button id="power-btn" class="icon-btn" aria-label="Power">
       <svg viewBox="0 0 24 24"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
     </button>
   </header>
+
+  <div id="update-card" class="update-card" hidden>
+    <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+    <div class="update-text"><strong>Update available</strong><span id="update-sub"></span></div>
+    <button id="update-later" class="pill small ghost">Later</button>
+    <button id="update-install" class="pill small accent">Install</button>
+  </div>
 
   <nav id="apps" class="apps" aria-label="Services"></nav>
 
@@ -119,7 +129,61 @@
     </form>
   </dialog>
 
+  <dialog id="settings" class="sheet" aria-labelledby="settings-title">
+    <header class="sheet-head">
+      <h2 id="settings-title">Settings</h2>
+      <button id="settings-close" class="icon-btn" aria-label="Close settings"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+    <div class="sheet-body">
+      <section>
+        <h3>Apps</h3>
+        <p class="note">Choose which apps appear on the TV and on this remote.</p>
+        <div id="set-apps" class="list"></div>
+      </section>
+      <section>
+        <h3>Screensaver</h3>
+        <div class="field"><span>Start after</span><div id="set-saver" class="seg"></div></div>
+        <label class="switch-row"><span>Show the time</span><input type="checkbox" id="set-saver-clock" class="switch"></label>
+        <p class="note">Never covers a playing video. While music plays (Spotify), it shows the album on a turntable.</p>
+        <button id="set-saver-preview" class="pill small">Preview on the TV</button>
+      </section>
+      <section>
+        <h3>Sound</h3>
+        <div class="field"><span>Volume when the box starts</span><div id="set-volume" class="seg"></div></div>
+      </section>
+      <section>
+        <h3>Performance</h3>
+        <label class="switch-row"><span>Smooth video<small>Asks sites for H.264, which the Pi decodes in hardware, instead of VP9/AV1. Applies to apps opened after the change.</small></span><input type="checkbox" id="set-h264" class="switch"></label>
+        <label class="switch-row"><span>Lite browser<small>Fewer Chromium processes and less memory, without per-site isolation.</small></span><input type="checkbox" id="set-lite" class="switch"></label>
+        <div id="set-restart-note" class="restart-note" hidden>
+          <span>Restart the TV display to apply this.</span>
+          <button id="set-restart-now" class="pill small accent">Restart now</button>
+        </div>
+      </section>
+      <section>
+        <h3>Updates</h3>
+        <p id="set-update-status" class="note"></p>
+        <label class="switch-row"><span>Check for updates automatically</span><input type="checkbox" id="set-autoupdate" class="switch"></label>
+        <div class="row">
+          <button id="set-check" class="pill small">Check now</button>
+          <button id="set-install" class="pill small accent" hidden>Install update</button>
+        </div>
+      </section>
+      <section>
+        <h3>Phones</h3>
+        <p class="note">To pair another phone, scan the QR code on the TV or enter PIN <b id="set-pin">–</b>.</p>
+        <button id="set-forget" class="pill small danger">Forget all phones</button>
+      </section>
+      <section>
+        <h3>About this box</h3>
+        <dl id="set-about" class="about"></dl>
+        <button id="set-restart-display" class="pill small">Restart TV display</button>
+      </section>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" hidden></div>
   <script src="/remote/remote.js"></script>
+  <script src="/remote/settings.js"></script>
 </body>
 </html>

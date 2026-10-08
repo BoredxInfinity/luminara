@@ -1,24 +1,27 @@
 // TV launcher. Arrow keys and Enter come from the remote (as real key events via
-// CDP) or from a USB keyboard; both take the same path below.
+// CDP) or from a USB keyboard; both take the same path below. The screensaver and
+// on-screen messages live in web/inject/overlay.js, which runs on every page.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const SAVER_AFTER_MS = 3 * 60 * 1000;
 
-let services = [];
-let state = { recent: {}, remotes: 0 };
-let selected = 0;
+let allServices = [];
+let services = [];          // visible ones (Settings can hide apps)
+let state = { recent: {}, remotes: 0, settings: {}, update: {} };
+let selected = "";          // focused service id
+let focusArea = "tiles";    // "tiles" | "update"
+let updateBtn = 0;          // 0 = Install, 1 = Later
 let ws = null;
 
 // ---- artwork (logo files are cached by the server; fall back to the glyph) ----
 
-function art(service, kind, cls = "") {
+function art(service, kind) {
   const style = service[kind];
   if (!style) return glyph(service);
   const img = new Image();
   img.src = `/logos/${encodeURIComponent(service.id)}/${kind}?v=${style.v}`;
   img.alt = service.name;
-  img.className = cls + (style.filter === "white" ? " white" : "");
+  if (style.filter === "white") img.className = "white";
   img.onerror = () => img.replaceWith(glyph(service));
   return img;
 }
@@ -33,29 +36,33 @@ function glyph(service) {
 // ---- tiles & hero ------------------------------------------------------------
 
 function render() {
-  $("tiles").replaceChildren(...services.map((s, i) => {
+  const hidden = new Set(state.settings?.hidden_apps || []);
+  services = allServices.filter((s) => !hidden.has(s.id));
+  if (!services.some((s) => s.id === selected)) selected = services[0]?.id || "";
+  $("tiles").style.setProperty("--cols", String(Math.min(Math.max(services.length, 1), 5)));
+  $("tiles").replaceChildren(...services.map((s) => {
     const li = document.createElement("li");
     li.className = "tile";
     li.setAttribute("role", "option");
     li.setAttribute("aria-label", s.name);
     li.style.setProperty("--tile", s.tile);
     li.style.setProperty("--c", s.color);
-    li.dataset.index = i;
+    li.dataset.id = s.id;
     const shade = document.createElement("span");
     shade.className = "shade";
     li.append(shade, art(s, "logo"));
-    li.addEventListener("click", () => { select(i); launch(); });
+    li.addEventListener("click", () => { select(s.id); launch(); });
     return li;
   }));
   paint(true);
 }
 
 let glowFlip = false, glowColor = "";
-function paint(force = false) {
+function paint(quiet = false) {
   for (const li of $("tiles").children) {
-    li.setAttribute("aria-selected", String(Number(li.dataset.index) === selected));
+    li.setAttribute("aria-selected", String(focusArea === "tiles" && li.dataset.id === selected));
   }
-  const s = services[selected];
+  const s = services.find((x) => x.id === selected);
   if (!s) return;
   document.documentElement.style.setProperty("--accent", s.color);
 
@@ -75,27 +82,31 @@ function paint(force = false) {
   $("hero-eyebrow").textContent = opened && opened === newest ? "Jump back in" : "Watch on";
   $("hero-title").textContent = s.name;
   $("hero-sub").textContent = [s.tagline, opened ? `Opened ${ago(opened)}` : ""].filter(Boolean).join("  ·  ");
-  if (!force) { hero.classList.remove("swap"); void hero.offsetWidth; hero.classList.add("swap"); }
+  if (!quiet) { hero.classList.remove("swap"); void hero.offsetWidth; hero.classList.add("swap"); }
 }
 
-function select(i, announce = true) {
-  if (!services.length) return;
-  const next = Math.max(0, Math.min(services.length - 1, i));
-  if (next === selected && !announce) return;
-  selected = next;
-  paint();
-  if (announce && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "select", index: selected }));
+function select(id, announce = true) {
+  if (!services.some((s) => s.id === id) || (id === selected && !announce)) return;
+  const changed = id !== selected;
+  selected = id;
+  paint(!changed);
+  if (announce && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "select", id }));
+}
+
+function move(step) {
+  const i = services.findIndex((s) => s.id === selected);
+  const next = services[i + step];
+  if (next) select(next.id);
 }
 
 function launch() {
-  const s = services[selected];
-  if (s) fetch(`/api/launch/${encodeURIComponent(s.id)}`, { method: "POST" }).catch(() => {});
+  if (selected) fetch(`/api/launch/${encodeURIComponent(selected)}`, { method: "POST" }).catch(() => {});
 }
 
 // The server announces a launch (from here or from a phone) just before it navigates.
 let splashTimer = 0;
 function showSplash(id) {
-  const s = services.find((x) => x.id === id);
+  const s = allServices.find((x) => x.id === id);
   if (!s) return;
   const splash = $("splash");
   splash.style.setProperty("--tile", s.tile);
@@ -115,22 +126,60 @@ function ago(epochSeconds) {
   return days === 1 ? "yesterday" : `${days} days ago`;
 }
 
+// ---- update banner -------------------------------------------------------------
+
+function updateVisible() {
+  const u = state.update || {};
+  return Boolean(u.available && u.latest !== state.settings?.update_dismissed);
+}
+
+function paintUpdate() {
+  const u = state.update || {};
+  const show = updateVisible() || u.installing;
+  $("update").hidden = !show;
+  if (!show && focusArea === "update") focusArea = "tiles";
+  if (!show) return;
+  const n = (u.commits || []).length;
+  $("update-detail").textContent = u.installing ? "Installing… the TV will restart"
+    : u.error ? u.error
+    : `${n} change${n === 1 ? "" : "s"}: ${(u.commits || []).map((c) => c.subject).slice(0, 3).join(" · ")}`;
+  $("update").classList.toggle("busy", Boolean(u.installing));
+  $("update-install").classList.toggle("focus", focusArea === "update" && updateBtn === 0);
+  $("update-later").classList.toggle("focus", focusArea === "update" && updateBtn === 1);
+}
+
+async function updateAction(act) {
+  if (state.update?.installing) return;
+  await fetch(act === "install" ? "/api/update/install" : "/api/update/dismiss", { method: "POST" }).catch(() => {});
+  focusArea = "tiles";
+  paint(true);
+  paintUpdate();
+}
+$("update-install").addEventListener("click", () => updateAction("install"));
+$("update-later").addEventListener("click", () => updateAction("later"));
+
 // ---- input -------------------------------------------------------------------
 
 addEventListener("keydown", (e) => {
-  if (wake()) { e.preventDefault(); return; }  // first key only wakes the screensaver
-  const moves = { ArrowLeft: -1, ArrowRight: 1 };
-  if (e.key in moves) {
-    select(selected + moves[e.key]);
+  const k = e.key;
+  if (focusArea === "update") {
+    if (k === "ArrowLeft" || k === "ArrowRight") updateBtn = k === "ArrowLeft" ? 0 : 1;
+    else if (k === "ArrowDown" || k === "Escape") focusArea = "tiles";
+    else if (k === "Enter" || k === " ") updateAction(updateBtn === 0 ? "install" : "later");
+    else return;
     e.preventDefault();
-  } else if (e.key === "Enter" || e.key === " ") {
-    launch();
-    e.preventDefault();
+    paint(true);
+    paintUpdate();
+    return;
   }
+  if (k === "ArrowLeft" || k === "ArrowRight") move(k === "ArrowLeft" ? -1 : 1);
+  else if (k === "ArrowUp" && updateVisible()) { focusArea = "update"; updateBtn = 0; paint(true); paintUpdate(); }
+  else if (k === "Enter" || k === " ") launch();
+  else return;
+  e.preventDefault();
 });
-addEventListener("mousemove", () => wake(), { passive: true });
 
-// ---- clock, greeting, screensaver ---------------------------------------------
+// ---- clock & greeting ----------------------------------------------------------
 
 function greeting(h) {
   if (h < 5) return "Good night";
@@ -142,38 +191,11 @@ function greeting(h) {
 
 function tick() {
   const now = new Date();
-  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const date = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
-  $("clock").textContent = time;
-  $("date").textContent = date;
+  $("clock").textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  $("date").textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
   $("greeting").textContent = greeting(now.getHours());
-  document.querySelector(".saver-clock time").textContent = time;
-  document.querySelector(".saver-clock p").textContent = date;
   if (services.length) paint(true);  // keep "Opened 5 min ago" fresh
   setTimeout(tick, 60000 - (Date.now() % 60000) + 50);  // wake once a minute
-}
-
-let idleTimer = 0, driftTimer = 0;
-function armSaver() {
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    $("saver").classList.add("on");
-    drift();
-    driftTimer = setInterval(drift, 30000);  // move the clock around: no burn-in
-  }, SAVER_AFTER_MS);
-}
-function drift() {
-  const el = document.querySelector(".saver-clock");
-  const x = Math.random() * (innerWidth - el.offsetWidth);
-  const y = Math.random() * (innerHeight - el.offsetHeight);
-  el.style.transform = `translate(${x}px, ${y}px)`;
-}
-function wake() {
-  const was = $("saver").classList.contains("on");
-  $("saver").classList.remove("on");
-  clearInterval(driftTimer);
-  armSaver();
-  return was;
 }
 
 // ---- pairing info (refreshed: the Pi may get its IP after we load) -------------
@@ -184,7 +206,7 @@ async function loadInfo() {
     $("url").textContent = info.remote_url.replace(/^http:\/\//, "");
     $("pin").hidden = !info.pin;
     if (info.pin) $("pin").querySelector("strong").textContent = info.pin;
-    $("qr").src = `/qr.svg?u=${encodeURIComponent(info.remote_url)}`;
+    $("qr").src = `/qr.svg?u=${encodeURIComponent(info.remote_url)}&p=${info.pin || ""}`;
   } catch { /* server restarting; the next refresh fixes it */ }
 }
 
@@ -204,20 +226,23 @@ function connect() {
   ws.onopen = () => { $("status").hidden = true; };
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
-    if (msg.t === "launch") { showSplash(msg.id); return; }
+    if (msg.t === "launch") return showSplash(msg.id);
+    if (msg.t === "repaired") return loadInfo();
     if (msg.t !== "state") return;
-    const before = state.remotes || 0;
+    const before = state;
     state = msg;
-    paintRemotes(msg.remotes || 0, before);
+    paintRemotes(msg.remotes || 0, before.remotes || 0);
+    if (JSON.stringify(msg.settings?.hidden_apps) !== JSON.stringify(before.settings?.hidden_apps)) render();
     if (msg.selected !== selected) select(msg.selected, false);
     else paint(true);
+    paintUpdate();
   };
   ws.onclose = () => { $("status").hidden = false; setTimeout(connect, 2000); };
 }
 
 (async function init() {
   try {
-    services = await (await fetch("/api/services")).json();
+    allServices = await (await fetch("/api/services")).json();
   } catch {
     setTimeout(init, 2000);
     return;
@@ -226,6 +251,5 @@ function connect() {
   tick();
   loadInfo();
   setInterval(loadInfo, 60000);
-  armSaver();
   connect();
 })();

@@ -68,7 +68,7 @@ body {
 @keyframes pop { 40% { transform: scale(1.18); } }
 
 /* ---- hero + tiles ---- */
-main { display: flex; flex-direction: column; justify-content: center; gap: 4vh; }
+main { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 4vh; }
 .hero { min-height: 13vh; }
 .eyebrow { font-size: 1vw; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); transition: color .6s; }
 #hero-title { font-size: 4.4vw; font-weight: 750; letter-spacing: -.03em; line-height: 1.05; margin: .4vh 0 .6vh; }
@@ -76,7 +76,7 @@ main { display: flex; flex-direction: column; justify-content: center; gap: 4vh;
 .hero.swap { animation: swap .45s ease-out; }
 @keyframes swap { from { opacity: 0; transform: translateY(1vh); } }
 
-.tiles { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 2.2vw; }
+.tiles { list-style: none; display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 2vw; }
 .tile {
   position: relative; aspect-ratio: 16 / 9; border-radius: 1.1vw;
   background: var(--tile); isolation: isolate;
@@ -139,12 +139,25 @@ kbd {
 .splash-note { font-size: 1.2vw; color: rgba(255, 255, 255, .75); animation: breathe 1.6s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: .35; } }
 
-/* ---- screensaver ---- */
-.saver { position: fixed; inset: 0; z-index: 20; background: #000; opacity: 0; pointer-events: none; transition: opacity 1.2s ease; }
-.saver.on { opacity: 1; }
-.saver-clock { position: absolute; left: 0; top: 0; transition: transform 3s ease-in-out; text-align: left; }
-.saver-clock time { display: block; font-size: 7vw; font-weight: 200; font-variant-numeric: tabular-nums; color: #d8dce6; }
-.saver-clock p { font-size: 1.4vw; color: #6c7488; }
+/* ---- update banner (focus it with ▲ from the tiles) ---- */
+.update {
+  position: absolute; top: 1vh; left: 0; right: 0; z-index: 2;
+  display: flex; align-items: center; gap: 1.4vw; padding: 1.2vw 1.6vw; border-radius: 1.2vw;
+  background: rgba(124, 92, 255, .16); border: 1px solid rgba(124, 92, 255, .45);
+  box-shadow: 0 1vw 3vw rgba(0, 0, 0, .35); animation: drop .6s cubic-bezier(.2, .9, .3, 1.1);
+}
+@keyframes drop { from { opacity: 0; transform: translateY(-2vh); } }
+.update svg { width: 2.4vw; height: 2.4vw; fill: none; stroke: #b9a8ff; stroke-width: 2; stroke-linecap: round; flex: none; }
+.update-text { flex: 1; display: flex; flex-direction: column; gap: .2vw; min-width: 0; }
+.update-text strong { font-size: 1.35vw; }
+.update-text span { font-size: 1vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn {
+  font: 650 1.1vw/1 var(--font); color: var(--fg); padding: .9vw 1.6vw; border-radius: 999px; border: 0;
+  background: rgba(255, 255, 255, .1); transition: transform .2s, background-color .2s, box-shadow .2s;
+}
+.btn.primary { background: #7c5cff; }
+.btn.focus { transform: scale(1.08); box-shadow: 0 0 0 .2vw #fff; }
+.update.busy .btn { opacity: .5; }
 
 .status {
   position: fixed; left: 50%; bottom: 3vh; transform: translateX(-50%); z-index: 30;
