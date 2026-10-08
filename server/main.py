@@ -55,6 +55,7 @@ class Hub:
         self.selected = max(self.recent, key=self.recent.get, default=self.services[0].id)  # focused tile
         self._service_on_screen: str | None = None
         self._announced_update = ""
+        self._remote_left_at = 0.0  # when the last phone disconnected
         self._qr: tuple[str, str] | None = None  # (url, svg)
 
     # ---- state ----------------------------------------------------------
@@ -137,6 +138,13 @@ class Hub:
             self._announced_update = st["latest"]
             if self.browser.state.get("view") != "launcher":  # the launcher shows its own banner
                 self.osd(kind="toast", icon="update", text="Update available · install it from Settings on your phone")
+        await self.broadcast()
+
+    async def on_install_done(self, ok: bool) -> None:
+        """Only reached when the update didn't restart us: it failed, or there was nothing to do."""
+        self.osd(kind="ready")  # lift the "Updating…" curtain
+        text = "Already up to date" if ok else "Update failed · see Settings → Updates"
+        self.osd(kind="toast", icon="update", text=text)
         await self.broadcast()
 
     async def announce_restart(self) -> None:
@@ -441,6 +449,9 @@ async def reset_pin(request: web.Request):
         return fail("the PIN is turned off", 400)
     hub.auth.reset()
     hub._qr = None
+    # Already-connected phones must pair again too.
+    await asyncio.gather(*(ws.close(code=WSCloseCode.POLICY_VIOLATION) for ws, role in list(hub.clients.items())
+                           if role == "remote"), return_exceptions=True)
     await hub.send_to("tv", {"t": "repaired"})  # the launcher reloads its QR code and PIN
     return ok()
 
@@ -457,7 +468,7 @@ async def update_check(request: web.Request):
 async def update_install(request: web.Request):
     hub = request.app[HUB]
     try:
-        await hub.updater.install()
+        await hub.updater.install(hub.on_install_done)
     except RuntimeError as exc:
         return fail(str(exc), 400)
     hub.osd(kind="updating")
@@ -484,7 +495,8 @@ async def ws_handler(request: web.Request):
     await ws.prepare(request)
     hub.clients[ws] = role
     if role == "remote":
-        if hub.remote_count() == 1:
+        # Phones drop and reconnect whenever their screen sleeps; only announce a real arrival.
+        if hub.remote_count() == 1 and time.monotonic() - hub._remote_left_at > 300:
             hub.osd(kind="toast", icon="phone", text="Remote connected")
         await hub.broadcast()  # everyone sees the new remote count
     try:
@@ -511,6 +523,8 @@ async def ws_handler(request: web.Request):
     finally:
         hub.clients.pop(ws, None)
         if role == "remote":
+            if hub.remote_count() == 0:
+                hub._remote_left_at = time.monotonic()
             await hub.broadcast()
     return ws
 

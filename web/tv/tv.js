@@ -38,7 +38,11 @@ function glyph(service) {
 function render() {
   const hidden = new Set(state.settings?.hidden_apps || []);
   services = allServices.filter((s) => !hidden.has(s.id));
-  if (!services.some((s) => s.id === selected)) selected = services[0]?.id || "";
+  if (!services.some((s) => s.id === selected)) {
+    // The focused app was hidden: move focus and tell the remotes.
+    selected = services[0]?.id || "";
+    if (selected && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "select", id: selected }));
+  }
   $("tiles").style.setProperty("--cols", String(Math.min(Math.max(services.length, 1), 5)));
   $("tiles").replaceChildren(...services.map((s) => {
     const li = document.createElement("li");

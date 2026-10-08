@@ -124,6 +124,7 @@ class Browser:
         self._script_id: str | None = None
         self._tasks: set[asyncio.Task] = set()
         self._moving = False
+        self._reattaching = False
         self._runner: asyncio.Task | None = None
 
     # ---- lifecycle -------------------------------------------------------
@@ -266,6 +267,10 @@ class Browser:
         log.info("attached to tab %s (%s)", self._target, target["url"])
 
     async def _reattach(self) -> None:
+        # Losing the tab fires both targetDestroyed and detachedFromTarget; attach only once.
+        if self._reattaching:
+            return
+        self._reattaching = True
         self._session = self._target = None
         self._ua_applied = None
         self._script_id = None
@@ -273,6 +278,8 @@ class Browser:
             await self._attach()
         except CDPError as exc:
             log.warning("re-attach failed: %s", exc)
+        finally:
+            self._reattaching = False
 
     async def _refresh_viewport(self) -> None:
         metrics = await self.send("Page.getLayoutMetrics")

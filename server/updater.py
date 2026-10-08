@@ -36,6 +36,7 @@ class Updater:
     def __init__(self, repo: Path, data_dir: Path):
         self.repo = repo
         self._seen_file = data_dir / "last-version"
+        self._watch: asyncio.Task | None = None
         self.status: dict = {
             "current": "", "current_subject": "", "latest": "", "commits": [],
             "available": False, "checked_at": None, "checking": False, "installing": False,
@@ -102,13 +103,35 @@ class Updater:
             self.status.update(checking=False, checked_at=int(time.time()))
         return self.status
 
-    async def install(self) -> None:
+    async def install(self, on_done) -> None:
         if not self.status["can_install"]:
             raise RuntimeError("Updates can only be installed on the TV box itself")
+        if self.status["installing"]:
+            return
         code, out = await _run("sudo", "-n", "systemctl", "start", "--no-block", UNIT, timeout=15)
         if code != 0:
             raise RuntimeError(out or "couldn't start the updater")
         self.status.update(installing=True, error="")
+        self._watch = asyncio.create_task(self._watch_install(on_done))
+
+    async def _watch_install(self, on_done) -> None:
+        """A successful install restarts this server, so we only get to the end if
+        nothing needed restarting or the install failed."""
+        await asyncio.sleep(3)
+        deadline = time.monotonic() + 35 * 60
+        while time.monotonic() < deadline:
+            _, state = await _run("systemctl", "is-active", UNIT, timeout=10)
+            if state not in ("activating", "active", "reloading"):
+                break
+            await asyncio.sleep(3)
+        _, state = await _run("systemctl", "is-active", UNIT, timeout=10)
+        ok = state == "inactive"
+        if not ok:
+            _, logs = await _run("journalctl", "-u", UNIT, "-n", "4", "--no-pager", "-o", "cat", timeout=10)
+            self.status["error"] = "Update failed: " + (logs.splitlines()[-1] if logs else state)
+        self.status["installing"] = False
+        await self.check()
+        await on_done(ok)
 
     async def run_periodic(self, enabled, on_change) -> None:
         """Check soon after boot, then every few hours while auto-check is on."""

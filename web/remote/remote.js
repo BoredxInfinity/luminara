@@ -206,7 +206,12 @@ function connect() {
   ws.onopen = paintState;
   ws.onclose = () => {
     paintState();
-    if (paired) setTimeout(connect, 1500);
+    if (!paired) return;
+    // A WebSocket can't tell us why it closed; ask over HTTP whether we were un-paired.
+    fetch("/api/state").then((r) => {
+      if (r.status === 401) needPairing();
+      else setTimeout(connect, 1500);
+    }, () => setTimeout(connect, 3000));
   };
 }
 
@@ -385,7 +390,7 @@ async function start() {
   if (res.status === 401) return needPairing();
   services = await res.json();
   renderServices();
-  connect();
+  if (!ws || ws.readyState === WebSocket.CLOSED) connect();
 }
 
 (async function init() {

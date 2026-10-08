@@ -136,7 +136,8 @@ kbd {
 .splash-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .splash-logo img.white { filter: brightness(0) invert(1); }
 .splash-logo .glyph { font-size: 10vw; font-weight: 800; }
-.splash-note { font-size: 1.2vw; color: rgba(255, 255, 255, .75); animation: breathe 1.6s ease-in-out infinite; }
+.splash-note { font-size: 1.2vw; color: rgba(255, 255, 255, .75); }
+.splash.on .splash-note { animation: breathe 1.6s ease-in-out infinite; }  /* only while visible */
 @keyframes breathe { 50% { opacity: .35; } }
 
 /* ---- update banner (focus it with ▲ from the tiles) ---- */

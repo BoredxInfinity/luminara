@@ -54,8 +54,9 @@
 
     /* "Updating" curtain */
     .updating { position: absolute; inset: 0; z-index: 6; display: grid; place-content: center; justify-items: center; gap: 28px;
-                background: rgba(5,6,10,.92); opacity: 0; transition: opacity .6s; font-size: 34px; }
-    .updating.show { opacity: 1; }
+                background: rgba(5,6,10,.92); opacity: 0; visibility: hidden; transition: opacity .6s, visibility 0s .6s; font-size: 34px; }
+    .updating.show { opacity: 1; visibility: visible; transition: opacity .6s; }
+    .updating:not(.show) .spinner { animation: none; }  /* don't burn the Pi's CPU on every page */
     .updating small { font-size: 20px; color: #9aa3b8; font-weight: 500; }
     .spinner { width: 64px; height: 64px; border-radius: 50%; border: 5px solid rgba(255,255,255,.15); border-top-color: #fff; animation: spin 1s linear infinite; }
 
@@ -87,7 +88,7 @@
     .record { position: absolute; inset: 1.2vh; border-radius: 50%;
               background: repeating-radial-gradient(circle, #0c0c0c 0 .25vh, #1a1a1a .3vh .5vh);
               animation: spin 1.8s linear infinite; }
-    .paused .record { animation-play-state: paused; }
+    .paused .record, .saver:not(.on) .record, .saver:not(.on) .eq i { animation-play-state: paused; }
     .label { position: absolute; inset: 29%; border-radius: 50%; background: #c33 center / cover;
              box-shadow: 0 0 0 .5vh #0a0a0a; }
     .spindle { position: absolute; left: 50%; top: 50%; width: 1.4vh; height: 1.4vh; margin: -.7vh; border-radius: 50%;
@@ -294,7 +295,7 @@
     clearInterval(metaTimer);
     u.saver.classList.add("leaving");
     u.saver.classList.remove("on");
-    setTimeout(() => { if (!saverOn) cancelAnimationFrame(rafId); }, 800);
+    setTimeout(() => { if (!saverOn) { cancelAnimationFrame(rafId); rafId = 0; } }, 800);
   }
 
   let artShown = "";
@@ -305,7 +306,10 @@
     u.clockDate.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
     const music = nowPlaying();
     u.saver.classList.toggle("music", !!music);
-    if (!music) return;
+    if (!music) {
+      if (saverOn && !rafId) rafId = requestAnimationFrame(draw);  // music stopped: back to the dots
+      return;
+    }
     u.saver.classList.toggle("paused", !music.playing);
     u.source.textContent = music.source;
     u.title.textContent = music.title;
@@ -321,9 +325,13 @@
 
   // Pulsing grid of colour-shifting dots: two slow ripples travel across it.
   function draw(t) {
-    if (!saverOn && !ui.saver.classList.contains("leaving")) return;
+    // Stop the loop when hidden or while the turntable (pure CSS) is showing.
+    if ((!saverOn && !ui.saver.classList.contains("leaving")) || ui.saver.classList.contains("music")) {
+      rafId = 0;
+      return;
+    }
     rafId = requestAnimationFrame(draw);
-    if (t - lastFrame < 33 || ui.saver.classList.contains("music")) return;  // ~30 fps is plenty
+    if (t - lastFrame < 33) return;  // ~30 fps is plenty
     lastFrame = t;
     const c = ui.canvas, ctx = c.getContext("2d");
     const w = innerWidth, h = innerHeight;
