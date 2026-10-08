@@ -347,11 +347,11 @@
     }
   }
 
-  // Pulsing grid of colour-shifting dots: two slow ripples travel across it.
-  // ---- dot clock --------------------------------------------------------------
-  // The time is drawn with a fixed set of dots on a 5x7 grid per character. When the
-  // time changes every dot glides to a spot in the new digits; spare dots tuck in behind
-  // others, so dots never appear or vanish.
+  // ---- particle clock -----------------------------------------------------------
+  // The time is drawn on a 5x7 grid per character, each lit cell filled with a cluster
+  // of tiny particles. The particle count is fixed: when the time changes every particle
+  // glides to a spot in the new digits and spares tuck in behind others, so particles
+  // never appear or vanish.
   const GLYPHS = {
     0: ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
     1: ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
@@ -367,8 +367,35 @@
     A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
     P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
     M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+    // The rest of the alphabet the date needs (day and month names, in capitals).
+    B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+    C: ["01110", "10001", "10000", "10000", "10000", "10001", "01110"],
+    D: ["11100", "10010", "10001", "10001", "10001", "10010", "11100"],
+    E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+    F: ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
+    G: ["01110", "10001", "10000", "10111", "10001", "10001", "01111"],
+    H: ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
+    I: ["01110", "00100", "00100", "00100", "00100", "00100", "01110"],
+    J: ["00111", "00010", "00010", "00010", "00010", "10010", "01100"],
+    L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+    N: ["10001", "10001", "11001", "10101", "10011", "10001", "10001"],
+    O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+    R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+    S: ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+    T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+    U: ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
+    V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
+    W: ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
+    Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
+    " ": ["000", "000", "000", "000", "000", "000", "000"],
   };
   const SUFFIX_SCALE = 0.42;  // AM/PM drawn smaller, like a superscript
+  const SUB = 4;              // particles per cell side: each lit cell is a SUB x SUB cluster
+  const DATE_CELL = 1.2;      // a date cell (one particle) is this many clock particles wide
+  const DAYS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"];
+  const MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST",
+                  "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+  const dateText = (d) => `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
 
   function clock12(d) {
     const h = d.getHours() % 12 || 12;
@@ -380,50 +407,72 @@
     const out = [];
     let x = 0;
     for (const ch of text) {
-      const g = GLYPHS[ch];
+      const g = GLYPHS[ch] || GLYPHS[" "];
       g.forEach((row, r) => [...row].forEach((bit, c) => { if (bit === "1") out.push({ c: x + c, r }); }));
       x += g[0].length + 1;
     }
     return { cells: out, width: x - 1 };
   }
 
-  // Enough dots for the busiest time of day, so the count never changes.
-  // Worked out on first use, not on every page load.
-  let DOT_COUNT = 0;
-  const dotCount = () => DOT_COUNT || (DOT_COUNT = (() => {
-    let most = 0;
-    for (let m = 0; m < 24 * 60; m++) {
-      const t = clock12(new Date(2000, 0, 1, Math.floor(m / 60), m % 60));
-      most = Math.max(most, cells(t.time).cells.length + cells(t.suffix).cells.length);
+  // Enough particles for the busiest time of day and the busiest date, so the count
+  // never changes. Worked out on first use, not on every page load.
+  let CLOCK_MAX = 0, DATE_MAX = 0;
+  function dotCount() {
+    if (!CLOCK_MAX) {
+      for (let m = 0; m < 24 * 60; m++) {
+        const t = clock12(new Date(2000, 0, 1, Math.floor(m / 60), m % 60));
+        CLOCK_MAX = Math.max(CLOCK_MAX, cells(t.time).cells.length + cells(t.suffix).cells.length);
+      }
+      CLOCK_MAX *= SUB * SUB;
+      const most = (words) => Math.max(...words.map((x) => cells(String(x)).cells.length));
+      DATE_MAX = most(DAYS) + most(Array.from({ length: 31 }, (_, i) => i + 1)) + most(MONTHS);
     }
-    return most;
-  })());
+    return CLOCK_MAX + (cfg.saverClock ? DATE_MAX : 0);
+  }
 
-  // Screen positions for every lit cell of the current time, centred above the date.
-  function layout(t, w, h) {
-    const main = cells(t.time), suf = cells(t.suffix);
+  // Particle positions for the time, and the date under it (one particle per cell),
+  // centred on screen together. `size` is a clock cell.
+  function layout(t, date, w, h) {
+    const main = cells(t.time), suf = cells(t.suffix), day = date ? cells(date) : null;
     const units = main.width + 2.2 + suf.width * SUFFIX_SCALE;
     const size = Math.min((w * 0.8) / units, (h * 0.42) / 7);
-    const x0 = (w - units * size) / 2, y0 = h * 0.44 - 3.5 * size;
-    const pts = main.cells.map(({ c, r }) => ({ x: x0 + (c + 0.5) * size, y: y0 + (r + 0.5) * size, s: size }));
+    const dc = day ? Math.min((w * 0.86) / day.width, (size / SUB) * DATE_CELL) : 0;
+    const gap = day ? size * 1.4 : 0;
+    const x0 = (w - units * size) / 2, y0 = (h - (7 * size + gap + 7 * dc)) / 2;
+    const pts = [];
+    const fill = (ox, oy, cell) => {
+      const step = cell / SUB;
+      for (let i = 0; i < SUB; i++) {
+        for (let j = 0; j < SUB; j++) pts.push({ x: ox + (i + 0.5) * step, y: oy + (j + 0.5) * step, s: step });
+      }
+    };
+    for (const { c, r } of main.cells) fill(x0 + c * size, y0 + r * size, size);
     const sx = x0 + (main.width + 2.2) * size, ss = size * SUFFIX_SCALE;
-    for (const { c, r } of suf.cells) pts.push({ x: sx + (c + 0.5) * ss, y: y0 + (r + 0.5) * ss, s: ss });
-    return { pts, size, bottom: y0 + 7 * size };
+    for (const { c, r } of suf.cells) fill(sx + c * ss, y0 + r * ss, ss);
+    if (day) {
+      const dx = (w - day.width * dc) / 2, dy = y0 + 7 * size + gap;
+      for (const { c, r } of day.cells) pts.push({ x: dx + (c + 0.5) * dc, y: dy + (r + 0.5) * dc, s: dc });
+    }
+    return { pts, size };
   }
 
   let dots = [];       // {x, y, s (current), fx, fy, fs (from), tx, ty, ts (to), t0, dur, key}
-  let shownTime = "", shownW = 0, shownH = 0, dateY = 0, dotSize = 40;
+  let shown = "", shownW = 0, shownH = 0;
+  // What's on screen: the time, plus the date when it's turned on in Settings.
+  function stamp(d) {
+    const t = clock12(d);
+    return { t, date: cfg.saverClock ? dateText(d) : "", key: `${t.time}${t.suffix}|${cfg.saverClock ? dateText(d) : ""}` };
+  }
   const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
 
   function retarget(now, w, h, scatter) {
-    const t = clock12(new Date());
-    const { pts, size, bottom } = layout(t, w, h);
-    shownTime = t.time + t.suffix; shownW = w; shownH = h; dotSize = size;
-    dateY = Math.min(h * 0.9, bottom + size * 2.2);
+    const { t, date, key } = stamp(new Date());
+    const { pts, size } = layout(t, date, w, h);
+    shown = key; shownW = w; shownH = h;
     if (scatter || dots.length !== dotCount()) {  // fresh start: drift in from all over the screen
       dots = Array.from({ length: dotCount() }, () => {
         const x = Math.random() * w, y = Math.random() * h;
-        return { x, y, s: size * 0.4, key: "" };
+        return { x, y, s: size / SUB, key: "", phase: Math.random() * 6.2832 };
       });
     }
     const keyOf = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
@@ -446,7 +495,9 @@
       }
       plan.set(best, p); free.delete(best);
     }
-    // 3. Spare dots tuck in behind the nearest lit spot.
+    // 3. Spare dots tuck in behind the nearest lit spot, shimmering in step with the dot
+    //    that owns it so they stay hidden.
+    const owner = new Map([...plan].map(([d, p]) => [p, d]));
     for (const d of free) {
       let best = pts[0], bestD = Infinity;
       for (const p of pts) {
@@ -454,6 +505,7 @@
         if (dd < bestD) { bestD = dd; best = p; }
       }
       plan.set(d, best);
+      d.phase = owner.get(best).phase;
     }
     for (const [d, p] of plan) {
       const key = keyOf(p);
@@ -483,12 +535,13 @@
     const w = innerWidth, h = innerHeight;
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     const now = performance.now();
-    const time = clock12(new Date());
-    if (!dots.length || time.time + time.suffix !== shownTime || w !== shownW || h !== shownH) {
+    if (!dots.length || stamp(new Date()).key !== shown || w !== shownW || h !== shownH) {
       retarget(now, w, h, !dots.length);
     }
     ctx.clearRect(0, 0, w, h);
     const s = (t - startedAt) / 1000;
+    // Hundreds of particles: group them by (rounded) colour and fill each group in one go.
+    const batches = new Map();
     for (const d of dots) {
       if (d.t0 !== undefined) {
         const p = Math.min(1, Math.max(0, (now - d.t0) / d.dur));
@@ -498,25 +551,20 @@
         d.s = d.fs + (d.ts - d.fs) * k;
       }
       const { hue, v } = field(d.x, d.y, s, w, h);
-      ctx.fillStyle = `hsl(${hue}, 90%, ${52 + v * 12}%)`;
-      ctx.beginPath();
-      ctx.arc(d.x, d.y, d.s * (0.36 + 0.07 * v), 0, 6.2832);  // gentle pulse
-      ctx.fill();
+      const key = `${Math.round(hue / 4) * 4},${Math.round(v * 4)}`;
+      let path = batches.get(key);
+      if (!path) batches.set(key, (path = new Path2D()));
+      // A faint shimmer around each particle's spot, and a gentle pulse.
+      const x = d.x + Math.sin(s * 1.6 + d.phase) * d.s * 0.12;
+      const y = d.y + Math.cos(s * 1.3 + d.phase) * d.s * 0.12;
+      const r = d.s * (0.3 + 0.08 * v);
+      path.moveTo(x + r, y);
+      path.arc(x, y, r, 0, 6.2832);
     }
-    if (cfg.saverClock) {  // the date, in the same shifting colours
-      const text = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
-      const px = Math.round(Math.max(20, Math.min(dotSize * 0.8, h * 0.06)));
-      ctx.font = `600 ${px}px "Noto Sans Display","Noto Sans",system-ui,sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const half = ctx.measureText(text).width / 2;
-      const grad = ctx.createLinearGradient(w / 2 - half, 0, w / 2 + half, 0);
-      for (let i = 0; i <= 4; i++) {
-        const x = w / 2 - half + (half * 2 * i) / 4;
-        grad.addColorStop(i / 4, `hsl(${field(x, dateY, s, w, h).hue}, 90%, 64%)`);
-      }
-      ctx.fillStyle = grad;
-      ctx.fillText(text, w / 2, dateY);
+    for (const [key, path] of batches) {
+      const [hue, v] = key.split(",").map(Number);
+      ctx.fillStyle = `hsl(${hue}, 90%, ${52 + v * 3}%)`;
+      ctx.fill(path);
     }
   }
 

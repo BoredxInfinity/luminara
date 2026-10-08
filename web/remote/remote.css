@@ -98,6 +98,11 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   min-height: 48px; padding: 0 18px; border-radius: 999px; font-weight: 650; flex: 1;
   background: var(--surface); border: 1px solid var(--line);
 }
+.quick .pill { padding: 0 12px; }
+@media (max-width: 380px) {  /* Back · Home · Screensaver fit side by side on small phones */
+  .quick { gap: 8px; }
+  .quick .pill { padding: 0 10px; gap: 5px; font-size: 14px; }
+}
 .pill.small { min-height: 40px; font-size: 14px; padding: 0 12px; }
 .pill.small svg { width: 18px; height: 18px; }
 .pill.wide { width: 100%; flex: none; }

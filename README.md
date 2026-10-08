@@ -158,7 +158,8 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - An update banner when a new version is on GitHub.
 - **Screensaver** (after 5 minutes by default; change it in Settings):
   - It runs on the home screen and on streaming-site menus, but never over a playing video.
-  - It's a grid of colour-shifting dots pulsing in slow ripples, with the time.
+  - The time and date are drawn in hundreds of tiny colour-shifting particles. When the minute changes the particles glide into the new digits; none appear or vanish.
+  - The **Screensaver** button on the remote starts it right away (the turntable if music is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
   - **While music plays** (Spotify, or any site that publishes "now playing" info), it shows a turntable with the album art spinning on the record, plus the song, artist and album.
 - **D-pad on Netflix, Prime Video and JioHotstar:** these are mouse websites (only YouTube has a real TV interface in a browser), so the arrows move a white focus ring between titles, buttons and menus, and OK clicks.

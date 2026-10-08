@@ -134,7 +134,7 @@ $("set-autoupdate").addEventListener("change", (e) => saveSetting({ auto_update_
 
 $("set-saver-preview").addEventListener("click", async () => {
   buzz();
-  const res = await api("/api/saver/preview");
+  const res = await api("/api/saver/start");
   if (res && res.ok) toast("Press any button to wake the TV");
 });
 

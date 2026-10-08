@@ -244,6 +244,7 @@ for (const el of document.querySelectorAll("[data-hold-key]")) holdButton(el, ()
 for (const el of document.querySelectorAll("[data-hold-vol]")) holdButton(el, () => api("/api/volume", { action: el.dataset.holdVol }));
 $("vol-meter").addEventListener("click", () => { buzz(); api("/api/volume", { action: "mute" }); });
 $("home-btn").addEventListener("click", () => { buzz(12); api("/api/home"); });
+$("saver-btn").addEventListener("click", () => { buzz(12); api("/api/saver/start"); });
 
 // Tabs
 const tabs = [...document.querySelectorAll("[role=tab]")];

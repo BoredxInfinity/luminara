@@ -438,8 +438,10 @@ async def restart_display(request: web.Request):
     return ok()
 
 
-@routes.post("/api/saver/preview")
-async def saver_preview(request: web.Request):
+@routes.post("/api/saver/start")
+async def saver_start(request: web.Request):
+    """The remote's Screensaver button (and the Settings preview). overlay.js shows the
+    turntable when music is playing, the particle clock otherwise."""
     await request.app[HUB].browser.send(
         "Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.saver(true)"}, timeout=3)
     return ok()
