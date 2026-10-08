@@ -358,7 +358,7 @@ pad.addEventListener("pointermove", (e) => {
   p.x = e.clientX; p.y = e.clientY;
   gesture.moved += Math.abs(dx) + Math.abs(dy);
   if (pointers.size >= 2) {
-    pendScroll += dy * 3 / pointers.size;          // two fingers: scroll
+    pendScroll -= dy * 3 / pointers.size;  // two fingers: scroll like a phone (drag up = page moves up)
   } else {
     const speed = Math.hypot(dx, dy);
     const gain = 1.6 + Math.min(speed / 6, 2.4);  // pointer acceleration
