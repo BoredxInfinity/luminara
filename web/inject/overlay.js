@@ -34,6 +34,14 @@
 
   if (window.top !== window || window.__tvbox) return;
 
+  // No scrollbars on a TV. Chromium's own are off (--hide-scrollbars in kiosk.sh); this
+  // hides the ones sites draw themselves (OverlayScrollbars, used by Spotify).
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(".os-scrollbar { display: none !important; }");
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  } catch { /* very old engine: leave them */ }
+
   // Some players (Spotify) play through an <audio> that's never put in the page, where
   // querySelectorAll can't see it. We run before the page's scripts, so remember every
   // element that starts playing.

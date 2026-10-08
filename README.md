@@ -165,6 +165,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - Right at the end of a row pages the row, like a TV app. Up/down go row by row.
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.
   - While a video plays full screen, the arrows go to the player (seek, volume) as before. Touching the touchpad hands control to the cursor.
+- **No scrollbars** anywhere on the TV (scrolling still works).
 - **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects or an update arrives, and the touchpad cursor.
 - **Phone remote:**
   - It shows what's on the TV and takes on that service's colour.
