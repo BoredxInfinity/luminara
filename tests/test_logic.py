@@ -137,3 +137,10 @@ def test_boot_volume_setting_is_clamped():
     assert load_settings({}).boot_volume == 100
     assert load_settings({"TVBOX_BOOT_VOLUME": "250"}).boot_volume == 100
     assert load_settings({"TVBOX_BOOT_VOLUME": "0"}).boot_volume == 0
+
+
+def test_dpad_services():
+    by_id = {s.id: s for s in SERVICES}
+    assert by_id["netflix"].dpad and by_id["netflix"].dpad_cards is None
+    assert by_id["jiohotstar"].dpad and by_id["jiohotstar"].dpad_cards
+    assert not by_id["youtube"].dpad  # YouTube's TV interface handles arrows itself

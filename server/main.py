@@ -114,7 +114,8 @@ class Hub:
     def page_config(self) -> dict:
         """The settings overlay.js needs inside every page."""
         p = self.prefs
-        return {"preferH264": p["prefer_h264"], "saverMinutes": p["saver_minutes"], "saverClock": p["saver_clock"]}
+        dpad = [{"hosts": list(s.match), "cards": s.dpad_cards} for s in self.services if s.dpad]
+        return {"preferH264": p["prefer_h264"], "saverMinutes": p["saver_minutes"], "saverClock": p["saver_clock"], "dpad": dpad}
 
     def write_chromium_env(self) -> None:
         """deploy/kiosk.sh sources this when Chromium starts."""

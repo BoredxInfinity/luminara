@@ -98,6 +98,8 @@ class Service:
     match: tuple[str, ...] = ()
     keys: dict[str, str] = field(default_factory=dict)
     user_agent: str | None = None
+    dpad: bool = False              # arrow keys navigate the site (web/inject/dpad.js)
+    dpad_cards: str | None = None   # CSS for title cards the site doesn't mark clickable
 
     def media_key(self, action: str) -> str:
         return self.keys.get(action) or DEFAULT_MEDIA_KEYS[action]
@@ -124,6 +126,7 @@ def load_services(path: Path) -> list[Service]:
             raise ValueError(f"duplicate service id {sid!r} in {path}")
         seen.add(sid)
         match = item.get("match") or [urlsplit(item["url"]).hostname]
+        dpad = item.get("dpad") or False  # true, or {"cards": "<css>"}
         services.append(
             Service(
                 id=sid,
@@ -138,6 +141,8 @@ def load_services(path: Path) -> list[Service]:
                 match=tuple(m.lower() for m in match),
                 keys=dict(item.get("keys", {})),
                 user_agent=item.get("user_agent"),
+                dpad=bool(dpad),
+                dpad_cards=dpad.get("cards") if isinstance(dpad, dict) else None,
             )
         )
     return services

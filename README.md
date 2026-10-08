@@ -161,6 +161,10 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - It's a grid of colour-shifting dots pulsing in slow ripples, with the time.
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
   - **While music plays** (Spotify, or any site that publishes "now playing" info), it shows a turntable with the album art spinning on the record, plus the song, artist and album.
+- **D-pad on Netflix, Prime Video and JioHotstar:** these are mouse websites (only YouTube has a real TV interface in a browser), so the arrows move a white focus ring between titles, buttons and menus, and OK clicks.
+  - Right at the end of a row pages the row, like a TV app. Up/down go row by row.
+  - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.
+  - While a video plays full screen, the arrows go to the player (seek, volume) as before. Touching the touchpad hands control to the cursor.
 - **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects or an update arrives, and the touchpad cursor.
 - **Phone remote:**
   - It shows what's on the TV and takes on that service's colour.
@@ -222,12 +226,14 @@ Add an entry to `services.json`, then push and run `./update.sh`:
   "logo": {"url": "https://…/zee5-wordmark.svg", "filter": "white"},
   "icon": {"url": "https://…/zee5-app-icon.png", "bg": "#000"},
   "keys": {"playpause": "space", "seek_fwd": "right", "seek_back": "left", "back": "escape"},
-  "user_agent": "optional UA override"
+  "user_agent": "optional UA override",
+  "dpad": true
 }
 ```
 
 - `match` lists the domains used to work out which service is on screen. `logo` is the wordmark on the TV tile; `icon` is the square app icon on the remote. Options: `filter: "white"` makes the logo white, and `recolor` swaps SVG colours. Square App Store icons come from `https://itunes.apple.com/search?entity=software&term=<name>` (use `artworkUrl512`).
 - `keys` and `user_agent` are optional. Keys can include modifiers, for example `"shift+right"`.
+- `dpad` turns on arrow-key navigation for a mouse-only site. If its title cards aren't links or buttons, list them: `"dpad": {"cards": ".row div[aria-label]"}` (that's how JioHotstar is set up).
 
 ## Housekeeping (on the Pi)
 
@@ -269,6 +275,7 @@ Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`
 | `server/settings.py` | settings from the remote's panel |
 | `server/updater.py` | checks GitHub, starts installs |
 | `web/inject/overlay.js` | injected into every page: H.264 steering, screensaver, cursor, volume bar, toasts |
+| `web/inject/dpad.js` | injected too: D-pad navigation for sites with `dpad` in `services.json` |
 | `web/remote/settings.js` | the Settings panel |
 | `deploy/` | systemd units (incl. `tvbox-update.service`), cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
 | `install.sh` | one-time Pi setup |

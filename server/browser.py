@@ -19,8 +19,10 @@ from .config import DEFAULT_MEDIA_KEYS, ROOT, Service, Settings, service_for_url
 
 log = logging.getLogger("tvbox.browser")
 
-# Injected into every page: draws the remote's cursor and on-screen messages (volume, toasts).
+# Injected into every page: draws the remote's cursor and on-screen messages (volume, toasts),
+# and gives mouse-only sites D-pad navigation.
 OVERLAY_JS = (ROOT / "web" / "inject" / "overlay.js").read_text(encoding="utf-8")
+DPAD_JS = (ROOT / "web" / "inject" / "dpad.js").read_text(encoding="utf-8")
 
 # name -> (key, code, windowsVirtualKeyCode, text)
 KEYS: dict[str, tuple[str, str, int, str]] = {
@@ -388,7 +390,7 @@ class Browser:
 
     def _overlay_source(self) -> str:
         # The config must exist before the overlay runs: it patches codec checks at page start.
-        return f"window.__tvboxConfig = {json.dumps(self.page_config)};\n{OVERLAY_JS}"
+        return f"window.__tvboxConfig = {json.dumps(self.page_config)};\n{OVERLAY_JS}\n{DPAD_JS}"
 
     async def _register_overlay(self) -> None:
         if self._script_id:
