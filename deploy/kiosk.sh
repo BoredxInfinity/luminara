@@ -66,5 +66,6 @@ exec "$CHROMIUM" \
   --disk-cache-size=104857600 \
   --overscroll-history-navigation=0 \
   --disable-pinch \
+  --hide-scrollbars \
   $TVBOX_EXTRA_FLAGS \
   "$URL"
