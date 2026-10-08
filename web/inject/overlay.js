@@ -70,6 +70,7 @@
              text-shadow: 0 0 40px rgba(0,0,0,.9), 0 0 12px rgba(0,0,0,.8); }
     .clock b { display: block; font-size: 12vh; font-weight: 200; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
     .clock span { font-size: 2.6vh; font-weight: 500; color: rgba(255,255,255,.7); }
+    .saver:not(.music) .clock { display: none; }  /* the dots are the clock */
     .music .clock { left: auto; top: 6vh; right: 6vw; translate: none; text-align: right; }
     .music .clock b { font-size: 6vh; }
 
@@ -283,6 +284,7 @@
     startedAt = performance.now();
     u.saver.classList.remove("leaving");
     u.clock.style.display = cfg.saverClock ? "" : "none";
+    dots = [];  // dots drift in from all over the screen
     refreshSaver();
     metaTimer = setInterval(refreshSaver, 2000);  // track changes, clock
     rafId = requestAnimationFrame(draw);
@@ -302,7 +304,8 @@
   function refreshSaver() {
     const u = ui;
     const now = new Date();
-    u.clockTime.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const t12 = clock12(now);
+    u.clockTime.textContent = `${t12.time} ${t12.suffix}`;
     u.clockDate.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
     const music = nowPlaying();
     u.saver.classList.toggle("music", !!music);
@@ -324,6 +327,128 @@
   }
 
   // Pulsing grid of colour-shifting dots: two slow ripples travel across it.
+  // ---- dot clock --------------------------------------------------------------
+  // The time is drawn with a fixed set of dots on a 5x7 grid per character. When the
+  // time changes every dot glides to a spot in the new digits; spare dots tuck in behind
+  // others, so dots never appear or vanish.
+  const GLYPHS = {
+    0: ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+    1: ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+    2: ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+    3: ["11111", "00010", "00100", "00010", "00001", "10001", "01110"],
+    4: ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+    5: ["11111", "10000", "11110", "00001", "00001", "10001", "01110"],
+    6: ["00110", "01000", "10000", "11110", "10001", "10001", "01110"],
+    7: ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+    8: ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+    9: ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
+    ":": ["0", "0", "1", "0", "1", "0", "0"],
+    A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+    P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+    M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+  };
+  const SUFFIX_SCALE = 0.42;  // AM/PM drawn smaller, like a superscript
+
+  function clock12(d) {
+    const h = d.getHours() % 12 || 12;
+    return { time: `${h}:${String(d.getMinutes()).padStart(2, "0")}`, suffix: d.getHours() < 12 ? "AM" : "PM" };
+  }
+
+  // Grid cells (in character units) lit for a string: [{c, r}] plus its width in cells.
+  function cells(text) {
+    const out = [];
+    let x = 0;
+    for (const ch of text) {
+      const g = GLYPHS[ch];
+      g.forEach((row, r) => [...row].forEach((bit, c) => { if (bit === "1") out.push({ c: x + c, r }); }));
+      x += g[0].length + 1;
+    }
+    return { cells: out, width: x - 1 };
+  }
+
+  // Enough dots for the busiest time of day, so the count never changes.
+  // Worked out on first use, not on every page load.
+  let DOT_COUNT = 0;
+  const dotCount = () => DOT_COUNT || (DOT_COUNT = (() => {
+    let most = 0;
+    for (let m = 0; m < 24 * 60; m++) {
+      const t = clock12(new Date(2000, 0, 1, Math.floor(m / 60), m % 60));
+      most = Math.max(most, cells(t.time).cells.length + cells(t.suffix).cells.length);
+    }
+    return most;
+  })());
+
+  // Screen positions for every lit cell of the current time, centred above the date.
+  function layout(t, w, h) {
+    const main = cells(t.time), suf = cells(t.suffix);
+    const units = main.width + 2.2 + suf.width * SUFFIX_SCALE;
+    const size = Math.min((w * 0.8) / units, (h * 0.42) / 7);
+    const x0 = (w - units * size) / 2, y0 = h * 0.44 - 3.5 * size;
+    const pts = main.cells.map(({ c, r }) => ({ x: x0 + (c + 0.5) * size, y: y0 + (r + 0.5) * size, s: size }));
+    const sx = x0 + (main.width + 2.2) * size, ss = size * SUFFIX_SCALE;
+    for (const { c, r } of suf.cells) pts.push({ x: sx + (c + 0.5) * ss, y: y0 + (r + 0.5) * ss, s: ss });
+    return { pts, size, bottom: y0 + 7 * size };
+  }
+
+  let dots = [];       // {x, y, s (current), fx, fy, fs (from), tx, ty, ts (to), t0, dur, key}
+  let shownTime = "", shownW = 0, shownH = 0, dateY = 0, dotSize = 40;
+  const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
+
+  function retarget(now, w, h, scatter) {
+    const t = clock12(new Date());
+    const { pts, size, bottom } = layout(t, w, h);
+    shownTime = t.time + t.suffix; shownW = w; shownH = h; dotSize = size;
+    dateY = Math.min(h * 0.9, bottom + size * 2.2);
+    if (scatter || dots.length !== dotCount()) {  // fresh start: drift in from all over the screen
+      dots = Array.from({ length: dotCount() }, () => {
+        const x = Math.random() * w, y = Math.random() * h;
+        return { x, y, s: size * 0.4, key: "" };
+      });
+    }
+    const keyOf = (p) => `${Math.round(p.x)},${Math.round(p.y)}`;
+    const free = new Set(dots);
+    const plan = new Map();
+    // 1. Dots already sitting on a spot that's still lit stay put.
+    const byKey = new Map();
+    for (const d of dots) if (d.key && !byKey.has(d.key)) byKey.set(d.key, d);
+    const open = [];
+    for (const p of pts) {
+      const d = byKey.get(keyOf(p));
+      if (d && free.has(d)) { plan.set(d, p); free.delete(d); } else open.push(p);
+    }
+    // 2. Each remaining spot takes the nearest free dot.
+    for (const p of open) {
+      let best = null, bestD = Infinity;
+      for (const d of free) {
+        const dd = (d.x - p.x) ** 2 + (d.y - p.y) ** 2;
+        if (dd < bestD) { bestD = dd; best = d; }
+      }
+      plan.set(best, p); free.delete(best);
+    }
+    // 3. Spare dots tuck in behind the nearest lit spot.
+    for (const d of free) {
+      let best = pts[0], bestD = Infinity;
+      for (const p of pts) {
+        const dd = (d.x - p.x) ** 2 + (d.y - p.y) ** 2;
+        if (dd < bestD) { bestD = dd; best = p; }
+      }
+      plan.set(d, best);
+    }
+    for (const [d, p] of plan) {
+      const key = keyOf(p);
+      if (key === d.key && !scatter) continue;
+      Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: p.x, ty: p.y, ts: p.s, key,
+                         t0: now + Math.random() * (scatter ? 900 : 350), dur: scatter ? 2600 : 1500 });
+    }
+  }
+
+  // Shared colour field: hues drift over time and ripple across the screen.
+  function field(x, y, s, w, h) {
+    const ax = w * (0.5 + 0.35 * Math.cos(s * 0.11)), ay = h * (0.5 + 0.35 * Math.sin(s * 0.13));
+    const v = (Math.sin(Math.hypot(x - ax, y - ay) / 90 - s * 1.3) + 1) / 2;  // 0..1
+    return { hue: (s * 14 + (x / w) * 140 + (y / h) * 50 + v * 50) % 360, v };
+  }
+
   function draw(t) {
     // Stop the loop when hidden or while the turntable (pure CSS) is showing.
     if ((!saverOn && !ui.saver.classList.contains("leaving")) || ui.saver.classList.contains("music")) {
@@ -336,26 +461,41 @@
     const c = ui.canvas, ctx = c.getContext("2d");
     const w = innerWidth, h = innerHeight;
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    const now = performance.now();
+    const time = clock12(new Date());
+    if (!dots.length || time.time + time.suffix !== shownTime || w !== shownW || h !== shownH) {
+      retarget(now, w, h, !dots.length);
+    }
     ctx.clearRect(0, 0, w, h);
     const s = (t - startedAt) / 1000;
-    const grow = Math.min(1, s / 5) ** 2;  // dots swell in gently over 5 s
-    const gap = Math.max(40, Math.round(Math.min(w, h) / 15));
-    const cols = Math.ceil(w / gap), rows = Math.ceil(h / gap);
-    const ox = (w - (cols - 1) * gap) / 2, oy = (h - (rows - 1) * gap) / 2;
-    const ax = w * (0.5 + 0.35 * Math.cos(s * 0.11)), ay = h * (0.5 + 0.35 * Math.sin(s * 0.13));
-    const bx = w * (0.5 + 0.4 * Math.sin(s * 0.07 + 2)), by = h * (0.5 + 0.4 * Math.cos(s * 0.09 + 1));
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) {
-        const x = ox + i * gap, y = oy + j * gap;
-        const da = Math.hypot(x - ax, y - ay), db = Math.hypot(x - bx, y - by);
-        const v = (Math.sin(da / gap * 0.9 - s * 1.3) + Math.sin(db / gap * 0.7 - s * 0.9) + 2) / 4;  // 0..1
-        const r = (gap * 0.06 + gap * 0.3 * v ** 1.8) * grow;
-        const hue = (s * 14 + i * 5 + j * 7 + v * 70) % 360;
-        ctx.fillStyle = `hsla(${hue}, 88%, ${48 + v * 16}%, ${0.25 + 0.75 * v})`;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, 6.2832);
-        ctx.fill();
+    for (const d of dots) {
+      if (d.t0 !== undefined) {
+        const p = Math.min(1, Math.max(0, (now - d.t0) / d.dur));
+        const k = ease(p);
+        d.x = d.fx + (d.tx - d.fx) * k;
+        d.y = d.fy + (d.ty - d.fy) * k;
+        d.s = d.fs + (d.ts - d.fs) * k;
       }
+      const { hue, v } = field(d.x, d.y, s, w, h);
+      ctx.fillStyle = `hsl(${hue}, 90%, ${52 + v * 12}%)`;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.s * (0.36 + 0.07 * v), 0, 6.2832);  // gentle pulse
+      ctx.fill();
+    }
+    if (cfg.saverClock) {  // the date, in the same shifting colours
+      const text = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+      const px = Math.round(Math.max(20, Math.min(dotSize * 0.8, h * 0.06)));
+      ctx.font = `600 ${px}px "Noto Sans Display","Noto Sans",system-ui,sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const half = ctx.measureText(text).width / 2;
+      const grad = ctx.createLinearGradient(w / 2 - half, 0, w / 2 + half, 0);
+      for (let i = 0; i <= 4; i++) {
+        const x = w / 2 - half + (half * 2 * i) / 4;
+        grad.addColorStop(i / 4, `hsl(${field(x, dateY, s, w, h).hue}, 90%, 64%)`);
+      }
+      ctx.fillStyle = grad;
+      ctx.fillText(text, w / 2, dateY);
     }
   }
 

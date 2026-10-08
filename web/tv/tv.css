@@ -58,6 +58,7 @@ body {
 #date { font-size: 1.1vw; }
 .top-right { display: flex; align-items: center; gap: 1.6vw; }
 #clock { font-size: 3vw; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+#clock small { font-size: .42em; font-weight: 500; margin-left: .35em; letter-spacing: .04em; color: var(--muted); }
 .chip {
   display: inline-flex; align-items: center; gap: .5vw;
   padding: .45vw 1vw; border-radius: 999px; font-size: 1vw; font-weight: 600;

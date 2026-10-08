@@ -197,7 +197,10 @@ function greeting(h) {
 
 function tick() {
   const now = new Date();
-  $("clock").textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const h = now.getHours() % 12 || 12;
+  const ampm = document.createElement("small");
+  ampm.textContent = now.getHours() < 12 ? "AM" : "PM";
+  $("clock").replaceChildren(`${h}:${String(now.getMinutes()).padStart(2, "0")}`, ampm);
   $("date").textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
   $("greeting").textContent = greeting(now.getHours());
   if (services.length) paint(true);  // keep "Opened 5 min ago" fresh
