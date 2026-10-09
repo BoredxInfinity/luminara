@@ -31,7 +31,7 @@ as_user test -r "$APP_DIR/server/main.py" || { echo "$TV_USER can't read $APP_DI
 say "Installing packages"
 apt-get update
 apt-get install -y --no-install-recommends \
-  git curl python3-venv \
+  git curl python3-venv iw \
   cage \
   pipewire pipewire-pulse wireplumber \
   libwidevinecdm0 \
@@ -83,6 +83,15 @@ else
   printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
   echo "zram swap configured (active after reboot)"
 fi
+
+say "Wi-Fi without power saving"
+# With power saving on, the Wi-Fi chip naps between packets: remote presses (and mirror and
+# screen-sharing traffic) wait up to ~100 ms for it. The box is always plugged in.
+mkdir -p /etc/NetworkManager/conf.d
+printf '[connection]\nwifi.powersave = 2\n' > /etc/NetworkManager/conf.d/tvbox-wifi.conf
+for dev in $(iw dev 2>/dev/null | awk '$1 == "Interface" {print $2}'); do
+  iw dev "$dev" set power_save off 2>/dev/null || true  # now, without reconnecting
+done
 
 say "Logs that survive a reboot"
 # The box is often powered from the TV or projector, so it restarts with it; keep the logs
