@@ -312,3 +312,31 @@ def test_certificate_is_made_once_and_the_authority_key_is_deleted(tmp_path):
     cert.context()                                        # loads as a server certificate
     again = ensure_certificate(tmp_path, "192.168.1.99")  # IP changed: keep the trusted one
     assert again.cert.read_bytes() == cert.cert.read_bytes()
+
+
+def test_clear_to_home_closes_strays_unloads_the_app_and_frees_memory(tmp_path, monkeypatch):
+    import asyncio
+
+    import server.browser as browser_mod
+    from server.browser import Browser
+    from server.config import Settings
+
+    monkeypatch.setattr(browser_mod, "RELEASE_AFTER", 0)
+    b = Browser(Settings(data_dir=tmp_path), SERVICES, lambda: None)
+    b._target = "tv"
+    b.state.update(view="service", url="https://open.spotify.com/")
+    sent = []
+
+    async def fake_send(method, params=None, **kw):
+        sent.append((method, params))
+        if method == "Target.getTargets":
+            return {"targetInfos": [{"type": "page", "targetId": "tv", "url": "https://open.spotify.com/"},
+                                    {"type": "page", "targetId": "popup", "url": "https://ads.example/"}]}
+        return {}
+
+    b.send = fake_send
+    asyncio.run(b.clear_to_home())
+    methods = [m for m, _ in sent]
+    assert ("Target.closeTarget", {"targetId": "popup"}) in sent
+    assert ("Page.navigate", {"url": b.settings.launcher_url}) in sent
+    assert methods.index("Page.navigate") < methods.index("Memory.simulatePressureNotification")

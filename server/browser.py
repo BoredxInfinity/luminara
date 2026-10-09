@@ -137,7 +137,6 @@ class Browser:
         self._runner: asyncio.Task | None = None
         self.screencasting = False
         self._pixel_ratio = 1.0
-        self._before_cast: str | None = None
         self.on_frame: Callable[[dict], None] | None = None  # set by server/mirror.py
 
     # ---- lifecycle -------------------------------------------------------
@@ -395,21 +394,34 @@ class Browser:
         await asyncio.sleep(RELEASE_AFTER)  # let the home screen finish loading first
         await self.send("Memory.simulatePressureNotification", {"level": "moderate"}, timeout=5)
 
+    async def clear_to_home(self) -> None:
+        """The home screen with nothing else running: stray tabs closed, the app unloaded,
+        and what it freed handed back. Waits until done (unlike home()), for jobs that need
+        the room: installing an update, and before and after screen sharing."""
+        targets = (await self.send("Target.getTargets", page=False))["targetInfos"]
+        for t in targets:
+            if t["type"] == "page" and t["targetId"] != self._target and not t["url"].startswith("devtools://"):
+                await self.send("Target.closeTarget", {"targetId": t["targetId"]}, page=False)
+        if not self.state["url"].startswith(self.settings.launcher_url):
+            await self._apply_user_agent(None)
+            await self.send("Page.navigate", {"url": self.settings.launcher_url})
+        await self._release_memory()
+
     # ---- screen sharing (server/cast.py) ---------------------------------------
 
     async def open_cast(self) -> None:
-        """Show the receiver page, remembering what was on so it comes back afterwards."""
-        if self.state["view"] != "cast":
-            self._before_cast = self.state.get("url") or self.settings.launcher_url
-        await self._apply_user_agent(None)
+        """Clear everything down to the home screen first, so the receiver has the Pi to
+        itself, then show it."""
+        if self.state["view"] == "cast":
+            return
+        await self.clear_to_home()
         await self.send("Page.navigate", {"url": self.settings.cast_url})
 
     async def end_cast(self) -> None:
+        """Sharing is over: always back to a cleared home screen."""
         if self.state["view"] != "cast":
             return  # someone already switched to something else
-        back, self._before_cast = self._before_cast or self.settings.launcher_url, None
-        await self._apply_user_agent(service_for_url(self.services, back))
-        await self.send("Page.navigate", {"url": back})
+        await self.clear_to_home()
 
     async def back(self) -> None:
         if self.state["view"] == "launcher":

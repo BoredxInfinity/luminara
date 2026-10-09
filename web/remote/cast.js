@@ -12,16 +12,25 @@
   const computer = canShare || matchMedia("(pointer: fine)").matches;
   $("cast-btn").hidden = !computer;
 
-  // Text stays sharp at 1080p with fewer frames; video gets 720p at 30 fps. Both keep
-  // the Pi's decoding work bounded.
-  const MODES = {
-    text: { label: "Text & slides", width: 1920, height: 1080, fps: 15, hint: "detail",
-            bitrate: 5_000_000, degradation: "maintain-resolution" },
-    video: { label: "Video", width: 1280, height: 720, fps: 30, hint: "motion",
-             bitrate: 6_000_000, degradation: "maintain-framerate" },
+  // Picture size and frame rate, up to 1080p at 30 fps (the most the Pi decodes smoothly).
+  const SIZES = { 480: [854, 480], 720: [1280, 720], 1080: [1920, 1080] };
+  const RATES = [15, 24, 30];
+  const saved = (key, ok, fallback) => {
+    try { const v = Number(localStorage.getItem(key)); return ok(v) ? v : fallback; } catch { return fallback; }
   };
-  let mode = "text";
-  try { mode = MODES[localStorage.getItem("tvbox-cast-mode")] ? localStorage.getItem("tvbox-cast-mode") : "text"; } catch { /* storage unavailable */ }
+  let res = saved("tvbox-cast-res", (v) => v in SIZES, 720);
+  let fps = saved("tvbox-cast-fps", (v) => RATES.includes(v), 30);
+
+  // What the encoder is asked for. Bitrate grows with pixels per second (about 0.1 bit per
+  // pixel), within what home Wi-Fi carries comfortably. At 15 fps the picture is probably
+  // text: keep it sharp and drop frames if needed; faster, keep the motion smooth.
+  function quality() {
+    const [width, height] = SIZES[res];
+    const bitrate = Math.round(Math.min(8e6, Math.max(1.5e6, width * height * fps * 0.1)));
+    const still = fps <= 15;
+    return { width, height, fps, bitrate, label: `${res}p · ${fps} fps`,
+             hint: still ? "detail" : "motion", degradation: still ? "maintain-resolution" : "balanced" };
+  }
 
   let stream = null, pc = null, sock = null, sharing = false;
 
@@ -37,21 +46,31 @@
     el.className = `cast-status ${kind}`;
   }
 
-  function paintMode() {
-    $("cast-mode").replaceChildren(...Object.entries(MODES).map(([key, m]) => {
+  // Both pickers apply straight away, even while sharing.
+  function picker(el, values, current, label, onPick) {
+    el.replaceChildren(...values.map((v) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.textContent = m.label;
-      b.setAttribute("aria-pressed", String(key === mode));
+      b.textContent = label(v);
+      b.setAttribute("aria-pressed", String(v === current));
       b.addEventListener("click", () => {
         buzz();
-        mode = key;
-        try { localStorage.setItem("tvbox-cast-mode", key); } catch { /* storage unavailable */ }
+        onPick(v);
         paintMode();
         if (sharing) applyMode();
       });
       return b;
     }));
+  }
+  function paintMode() {
+    picker($("cast-res"), Object.keys(SIZES).map(Number), res, (v) => `${v}p`, (v) => {
+      res = v;
+      try { localStorage.setItem("tvbox-cast-res", v); } catch { /* storage unavailable */ }
+    });
+    picker($("cast-fps"), RATES, fps, (v) => `${v} fps`, (v) => {
+      fps = v;
+      try { localStorage.setItem("tvbox-cast-fps", v); } catch { /* storage unavailable */ }
+    });
   }
 
   async function paintPanel() {
@@ -109,7 +128,7 @@
 
   async function start() {
     buzz(12);
-    const m = MODES[mode];
+    const m = quality();
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { max: m.width }, height: { max: m.height }, frameRate: { ideal: m.fps, max: m.fps } },
@@ -176,7 +195,7 @@
     pc.onicecandidate = (e) => { if (e.candidate) send({ t: "ice", candidate: e.candidate }); };
     pc.onconnectionstatechange = () => {
       const st = pc && pc.connectionState;
-      if (st === "connected") status(`Sharing on the TV · ${MODES[mode].label.toLowerCase()}`, "live");
+      if (st === "connected") status(`Sharing on the TV · ${quality().label}`, "live");
       else if (st === "connecting") status("Connecting to the TV…");
       else if (st === "failed") status("Couldn't reach the TV over the network. Is this computer on the same Wi-Fi?", "bad");
     };
@@ -187,7 +206,7 @@
 
   // Frame rate, sharpness and bitrate, changeable while sharing without reconnecting.
   async function applyMode() {
-    const m = MODES[mode];
+    const m = quality();
     const track = stream && stream.getVideoTracks()[0];
     if (!track) return;
     track.contentHint = m.hint;
@@ -201,7 +220,7 @@
     params.encodings[0].maxFramerate = m.fps;
     params.degradationPreference = m.degradation;
     try { await sender.setParameters(params); } catch { /* not every browser takes every setting */ }
-    if (pc.connectionState === "connected") status(`Sharing on the TV · ${m.label.toLowerCase()}`, "live");
+    if (pc.connectionState === "connected") status(`Sharing on the TV · ${m.label}`, "live");
   }
 
   function stop(message, fromBox = false) {

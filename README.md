@@ -131,7 +131,7 @@ git add -A && git commit -m "Describe the change" && git push
   ssh <user>@<hostname>.local 'cd ~/luminara && ./update.sh'
   ```
 
-Both paths run `update.sh`. Installing from the TV or phone goes through `tvbox-update.service`, which runs as root, so it never asks for a password. `update.sh` pulls and then applies only what changed:
+Both paths run `update.sh`. Installing from the TV or phone goes through `tvbox-update.service`, which runs as root, so it never asks for a password. First the TV goes to the home screen, closes everything else and frees the memory, so the update has the Pi to itself. `update.sh` pulls and then applies only what changed:
 
 | You changed | What `update.sh` does |
 |---|---|
@@ -168,8 +168,9 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.
   - While a video plays full screen, the arrows go to the player (seek, volume) as before. Touching the touchpad hands control to the cursor.
 - **Share a laptop's screen on the TV** (the cast button at the top of the remote, on computers):
-  - Pick the whole screen, a window or a tab. The picture goes straight from the laptop's browser to the TV over your Wi-Fi (WebRTC); while sharing, the TV shows it full screen, then goes back to what it was showing.
-  - "Text & slides" sends up to 1080p at 15 fps; "Video" sends 720p at 30 fps. Both prefer H.264, which the Pi decodes cheaply. You can switch while sharing.
+  - Pick the whole screen, a window or a tab. The picture goes straight from the laptop's browser to the TV over your Wi-Fi (WebRTC) and fills the TV.
+  - Before it starts, the TV goes to the home screen, closes everything else and frees the memory, so the Pi is free for the stream. When sharing ends, the TV always returns to a cleared home screen.
+  - Choose the quality (480p, 720p or 1080p) and frame rate (15, 24 or 30 fps), even while sharing. H.264 is preferred, which the Pi decodes cheaply.
   - Share a tab with "Also share tab audio" to hear it on the TV.
   - Stop from the remote, from the browser's own "Stop sharing" bar, or by pressing Home/Back on any remote.
   - Phones and tablets can't share their screen from a web page, so the button only appears on computers.

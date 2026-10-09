@@ -508,6 +508,13 @@ async def update_check(request: web.Request):
 @routes.post("/api/update/install")
 async def update_install(request: web.Request):
     hub = request.app[HUB]
+    if not hub.updater.status["can_install"]:
+        return fail("Updates can only be installed on the TV box itself", 400)
+    # Give the update the whole Pi: home screen, every app unloaded, memory handed back.
+    try:
+        await hub.browser.clear_to_home()
+    except (CDPError, asyncio.TimeoutError) as exc:
+        log.warning("couldn't clear the TV before updating: %s", exc)  # update anyway
     try:
         await hub.updater.install(hub.on_install_done)
     except RuntimeError as exc:
