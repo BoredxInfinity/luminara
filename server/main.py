@@ -156,31 +156,40 @@ class Hub:
     # ---- Spotify on the screensaver ------------------------------------------------
 
     def on_saver(self, on: bool) -> None:
-        """The screensaver came on or went away. Spotify is only asked while it's up."""
-        if self._spotify_watch:
+        """The screensaver is up (reported, and repeated every 15 s) or gone. Spotify is
+        only asked while it's up. Idempotent: a repeat leaves a running watch alone and
+        restarts one that isn't running."""
+        running = self._spotify_watch is not None and not self._spotify_watch.done()
+        if on and self.spotify.connected:
+            if not running:
+                log.info("screensaver up: watching Spotify")
+                self._spotify_watch = asyncio.create_task(self.watch_spotify())
+        elif running:
+            log.info("screensaver gone: Spotify watch stopped")
             self._spotify_watch.cancel()
             self._spotify_watch = None
-        if on and self.spotify.connected:
-            self._spotify_watch = asyncio.create_task(self.watch_spotify())
 
     async def watch_spotify(self) -> None:
         """While the screensaver shows: what's playing on the account, every POLL_SECONDS.
         Playing shows the turntable; paused or stopped for over a minute goes back to the clock."""
-        shown, quiet_since = False, None
+        shown, quiet_since, failing = False, None, False
         while True:
             try:
                 music = await self.spotify.now_playing(self.http)
-            except Exception as exc:  # noqa: BLE001 - a bad answer mustn't end the watch
-                log.debug("Spotify check failed: %s", exc)  # keep whatever is showing
-            else:
+                if failing:
+                    log.info("Spotify checks working again")
+                    failing = False
                 action, shown, quiet_since = spotify_step(music, time.monotonic(), shown, quiet_since)
-                try:
-                    if action == "show":
-                        await self.browser.music(music)
-                    elif action == "clear":
-                        await self.browser.music(None)
-                except (CDPError, asyncio.TimeoutError):
-                    pass
+                if action == "show":
+                    await self.browser.music(music)
+                elif action == "clear":
+                    await self.browser.music(None)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - nothing may end the watch; just try again
+                if not failing:  # once per run of failures, not every 3 s
+                    log.warning("Spotify check failed (will keep trying): %s: %s", type(exc).__name__, exc)
+                    failing = True
             await asyncio.sleep(POLL_SECONDS)  # a rate-limited check is just tried again here
 
     async def on_install_done(self, ok: bool) -> None:

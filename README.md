@@ -278,7 +278,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 
 ## Housekeeping (on the Pi)
 
-- **Logs:** `journalctl -u tvbox-server -u tvbox-kiosk -f`
+- **Logs:** `journalctl -u tvbox-server -u tvbox-kiosk -f` (kept across reboots, up to 50 MB; add `-b -1` for the previous boot)
 - **Update logs:** `journalctl -u tvbox-update`
 - **Reset the PIN and forget all remotes:** use **Settings → Phones → Forget all phones**.
 - **Turn off the PIN:** add `Environment=TVBOX_PIN=0` to `deploy/tvbox-server.service`, then push and update.

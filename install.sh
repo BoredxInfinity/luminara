@@ -84,6 +84,13 @@ else
   echo "zram swap configured (active after reboot)"
 fi
 
+say "Logs that survive a reboot"
+# The box is often powered from the TV or projector, so it restarts with it; keep the last
+# few boots' logs (capped, to spare the SD card) so a problem can still be looked into.
+mkdir -p /etc/systemd/journald.conf.d /var/log/journal
+printf '[Journal]\nStorage=persistent\nSystemMaxUse=50M\n' > /etc/systemd/journald.conf.d/tvbox.conf
+systemctl restart systemd-journald
+
 if [[ $FORCE_1080P -eq 1 ]]; then
   say "Capping HDMI output at 1080p"
   CMDLINE=/boot/firmware/cmdline.txt

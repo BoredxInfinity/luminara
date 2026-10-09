@@ -521,3 +521,106 @@ def test_spotify_rate_limit_skips_one_check_and_the_next_one_goes_ahead(tmp_path
 
     assert asyncio.run(run()) == {"is_playing": True}
     assert POLL_SECONDS <= 5
+
+
+def test_screensaver_heartbeat_keeps_one_spotify_watch_and_revives_a_dead_one():
+    import asyncio
+    from types import SimpleNamespace
+
+    from server.main import Hub
+
+    async def run():
+        started = []
+
+        async def watch():
+            started.append(1)
+            await asyncio.sleep(3600)
+
+        hub = SimpleNamespace(spotify=SimpleNamespace(connected=True), _spotify_watch=None, watch_spotify=watch)
+        on_saver = Hub.on_saver.__get__(hub)
+        on_saver(True)
+        await asyncio.sleep(0)
+        on_saver(True)                      # heartbeat: the running watch is left alone
+        await asyncio.sleep(0)
+        assert len(started) == 1
+        hub._spotify_watch.cancel()         # the watch died somehow
+        await asyncio.sleep(0)
+        on_saver(True)                      # next heartbeat revives it
+        await asyncio.sleep(0)
+        assert len(started) == 2
+        on_saver(False)
+        await asyncio.sleep(0)
+        assert hub._spotify_watch is None
+
+    asyncio.run(run())
+
+
+def test_spotify_watch_survives_errors_from_spotify_and_from_the_tv(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import server.main as main
+
+    monkeypatch.setattr(main, "POLL_SECONDS", 0.001)
+    answers = [RuntimeError("Spotify hiccup"), {"title": "Closer", "playing": True}, {"title": "Closer", "playing": True}]
+    shown = []
+
+    async def now_playing(http):
+        a = answers.pop(0) if answers else {"title": "Closer", "playing": True}
+        if isinstance(a, Exception):
+            raise a
+        return a
+
+    tv_failures = [ConnectionResetError("CDP socket blipped")]
+
+    async def music(m):
+        if tv_failures:
+            raise tv_failures.pop()
+        shown.append(m["title"])
+
+    hub = SimpleNamespace(spotify=SimpleNamespace(now_playing=now_playing), http=None, browser=SimpleNamespace(music=music))
+
+    async def run():
+        task = asyncio.create_task(main.Hub.watch_spotify(hub))
+        for _ in range(200):
+            await asyncio.sleep(0.002)
+            if shown:
+                break
+        task.cancel()
+        assert not task.done() or task.cancelled()  # still running until cancelled
+
+    asyncio.run(run())
+    assert shown and shown[0] == "Closer"
+
+
+def test_a_new_page_means_no_screensaver_and_gets_its_reporting_binding_back(tmp_path):
+    import asyncio
+
+    from server.browser import SIGNAL, Browser
+    from server.config import Settings
+
+    b = Browser(Settings(data_dir=tmp_path), SERVICES, lambda: None)
+    b._session = "S"
+    calls, sent = [], []
+    b.on_saver = calls.append
+
+    async def fake_send(method, params=None, **kw):
+        sent.append((method, params))
+        return {}
+
+    b.send = fake_send
+
+    async def run():
+        say = lambda on: b._dispatch("Runtime.bindingCalled", {"name": SIGNAL, "payload": f'{{"saver": {str(on).lower()}}}'}, "S")
+        say(True)
+        say(True)                                                             # heartbeat
+        assert b.saver_on and calls == [True, True]
+        b._dispatch("Page.frameNavigated", {"frame": {"id": "ad", "parentId": "main"}}, "S")  # an iframe
+        assert b.saver_on and not sent
+        b._dispatch("Page.frameNavigated", {"frame": {"id": "main"}}, "S")    # a new page
+        await asyncio.gather(*b._tasks)
+        assert not b.saver_on and calls[-1] is False
+        # Chromium drops the binding with the old document; it must be set up again.
+        assert sent == [("Runtime.addBinding", {"name": SIGNAL})]
+
+    asyncio.run(run())

@@ -331,7 +331,11 @@
              source: "Now playing" };
   }
 
+  let beat = 0;
   setInterval(() => {
+    // While it's up, keep telling the box (every 15 s), so it picks Spotify checks back up
+    // if it ever lost track, e.g. after its connection to Chromium blipped.
+    if (saverOn && ++beat % 3 === 0) signal({ saver: true });
     if (saverOn || !cfg.saverMinutes || document.visibilityState !== "visible") return;
     if (Date.now() - lastInput < cfg.saverMinutes * 60000) return;
     const music = nowPlaying();
@@ -357,12 +361,14 @@
   function signal(msg) {
     try { if (typeof window.__tvboxSignal === "function") window.__tvboxSignal(JSON.stringify(msg)); } catch { /* not under the box */ }
   }
+  signal({ saver: false });  // a page that just loaded has no screensaver up
 
   function startSaver() {
     const u = ensure();
     saverOn = true;
     trackShown = "";                 // the first song goes straight on, no swap
     mode = "clock";
+    session++;
     u.saver.classList.remove("music", "closing", "swapping");
     signal({ saver: true });
     pauseTrailers();
@@ -379,6 +385,7 @@
   function stopSaver() {
     const u = ensure();
     saverOn = false;
+    session++;
     remoteMusic = null;
     signal({ saver: false });
     resumeTrailers();
@@ -423,45 +430,65 @@
   // Music started: the clock's particles stream into where the record will be, the
   // turntable fades in around them as they fade out, the record drops onto the platter,
   // the titles rise in, and the tonearm swings on.
+  // Each screensaver session has a number; a transition from a session that has since
+  // closed (or restarted) stops instead of changing the new one.
+  let session = 0;
+  const still = (n) => n === session && saverOn;
+
   async function toMusic(m) {
-    const u = ui;
+    const u = ui, n = session;
     mode = "to-music";
-    showTrack(m);
-    u.source.textContent = m.source;
-    u.saver.classList.toggle("paused", !m.playing);
-    const fromClock = dots.length > 0;  // the screensaver just started: nothing to gather
-    if (fromClock) {
-      gatherInto(recordCentre());
-      await wait(800);
+    try {
+      showTrack(m);
+      u.source.textContent = m.source;
+      u.saver.classList.toggle("paused", !m.playing);
+      const fromClock = dots.length > 0;  // the screensaver just started: nothing to gather
+      if (fromClock) {
+        gatherInto(recordCentre());
+        await wait(800);
+        if (!still(n)) return;
+      }
+      u.saver.classList.add("swapping");        // tonearm waits off the record
+      u.saver.classList.add("music");
+      u.disc.animate([{ transform: "translateY(-6vh) scale(1.12)", opacity: 0 },
+                      { transform: "translateY(-6vh) scale(1.12)", opacity: 1, offset: 0.35 },
+                      { transform: "none", opacity: 1 }],
+                     { duration: 900, easing: "cubic-bezier(.5,0,.55,1.3)" });
+      await wait(1100);
+      if (!still(n)) return;
+      u.saver.classList.remove("swapping");     // tonearm swings onto the record
+      await wait(600);                          // particles are faded out by now
+    } finally {
+      if (n === session) {                      // whatever happened, land in a real state
+        mode = u.saver.classList.contains("music") ? "music" : "clock";
+        u.saver.classList.remove("swapping");
+      }
     }
-    u.saver.classList.add("swapping");        // tonearm waits off the record
-    u.saver.classList.add("music");
-    u.disc.animate([{ transform: "translateY(-6vh) scale(1.12)", opacity: 0 },
-                    { transform: "translateY(-6vh) scale(1.12)", opacity: 1, offset: 0.35 },
-                    { transform: "none", opacity: 1 }],
-                   { duration: 900, easing: "cubic-bezier(.5,0,.55,1.3)" });
-    await wait(1100);
-    u.saver.classList.remove("swapping");     // tonearm swings onto the record
-    await wait(600);                          // particles are faded out by now
-    mode = "music";
   }
 
   // Music gone: the tonearm lifts, the record winds down, the titles and turntable sink
   // away, and the particles burst out of the record into the clock.
   async function toClock() {
-    const u = ui;
+    const u = ui, n = session;
     mode = "to-clock";
-    u.saver.classList.add("swapping");
-    await wait(550);
-    u.saver.classList.add("closing");          // titles sink, the deck shrinks away
-    await wait(600);
-    const c = recordCentre();
-    u.saver.classList.remove("music");         // the (now empty) turntable fades; the clock fades in
-    burstFrom(c);
-    if (saverOn && !rafId) rafId = requestAnimationFrame(draw);
-    await wait(900);                           // keep it gone and the arm up until faded
-    u.saver.classList.remove("closing", "swapping");
-    mode = "clock";
+    try {
+      u.saver.classList.add("swapping");
+      await wait(550);
+      if (!still(n)) return;
+      u.saver.classList.add("closing");          // titles sink, the deck shrinks away
+      await wait(600);
+      if (!still(n)) return;
+      const c = recordCentre();
+      u.saver.classList.remove("music");         // the (now empty) turntable fades; the clock fades in
+      burstFrom(c);
+      if (saverOn && !rafId) rafId = requestAnimationFrame(draw);
+      await wait(900);                           // keep it gone and the arm up until faded
+    } finally {
+      if (n === session) {
+        u.saver.classList.remove("music", "closing", "swapping");
+        mode = "clock";
+      }
+    }
   }
 
   let trackShown = "", swapping = false, pendingTrack = null;

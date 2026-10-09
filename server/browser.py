@@ -336,8 +336,6 @@ class Browser:
         if method == "Target.targetInfoChanged":
             info = params["targetInfo"]
             if info["targetId"] == self._target:
-                if info["url"] != self.state.get("url"):
-                    self._set_saver(False)  # a new page starts without the screensaver
                 self._update(**self._describe(info["url"], info.get("title", "")))
             elif info["targetId"] in self._popups:
                 self._maybe_fold_popup(info)
@@ -354,6 +352,13 @@ class Browser:
         elif method == "Target.detachedFromTarget":
             if params.get("sessionId") == self._session:
                 self.spawn(self._reattach())
+        elif method == "Page.frameNavigated" and session == self._session and not params.get("frame", {}).get("parentId"):
+            # A new document in the TV tab starts without the screensaver. (Address changes
+            # within a page, which some apps make on their own while idle, don't count.)
+            self._set_saver(False)
+            # Chromium drops the page's binding with the old document: without this, after the
+            # first app or Home the screensaver couldn't report itself and Spotify was never asked.
+            self.spawn(self.send("Runtime.addBinding", {"name": SIGNAL}))
         elif method == "Runtime.bindingCalled" and session == self._session and params.get("name") == SIGNAL:
             try:
                 msg = json.loads(params.get("payload") or "{}")
@@ -491,10 +496,12 @@ class Browser:
         await self.send("Runtime.evaluate", {"expression": f"window.__tvbox && window.__tvbox.configure({json.dumps(config)})"})
 
     def _set_saver(self, on: bool) -> None:
-        if on == self.saver_on:
-            return
-        self.saver_on = on
-        self._music_sent = ""
+        """The page's report (or a new page/lost connection meaning "off"). Repeated reports
+        are passed on too: the page repeats "on" every 15 s, which is how a Spotify watch
+        that stopped (or never started) gets going again."""
+        if on != self.saver_on:
+            self.saver_on = on
+            self._music_sent = ""
         if self.on_saver:
             result = self.on_saver(on)
             if asyncio.iscoroutine(result):
