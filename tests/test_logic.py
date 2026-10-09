@@ -626,7 +626,7 @@ def test_a_new_page_means_no_screensaver_and_gets_its_reporting_binding_back(tmp
     asyncio.run(run())
 
 
-def test_watchdog_sends_a_stuck_page_home_then_replaces_it_and_drops_a_hung_browser(tmp_path, monkeypatch):
+def test_watchdog_restarts_a_stuck_page_and_reconnects_to_a_hung_browser(tmp_path, monkeypatch):
     import asyncio
 
     import server.browser as browser_mod
@@ -661,11 +661,15 @@ def test_watchdog_sends_a_stuck_page_home_then_replaces_it_and_drops_a_hung_brow
             await asyncio.sleep(0)
         await asyncio.sleep(0)
         await asyncio.gather(*b._tasks)
-        # A minute without an answer: home; another minute: the tab is replaced.
-        assert sent.count("Page.navigate") == 1 and sent.count("Target.closeTarget") == 1
-        page_ok[0], browser_ok[0] = True, False
-        await asyncio.wait_for(task, 1)  # the browser stopped answering: connection dropped
+        # A minute without an answer: the renderer is crashed (the crash handler goes home);
+        # another minute: the connection is started over.
+        assert sent.count("Page.crash") == 1
+        await asyncio.wait_for(task, 1)
         assert ws.closed
+        sent.clear()
+        ws.closed, page_ok[0], browser_ok[0] = False, True, False
+        await asyncio.wait_for(b._watchdog(ws), 1)  # the browser stopped answering: dropped too
+        assert ws.closed and "Runtime.evaluate" not in sent
 
     asyncio.run(run())
 

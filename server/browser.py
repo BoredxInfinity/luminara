@@ -307,10 +307,11 @@ class Browser:
 
     async def _watchdog(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Chromium can wedge without closing its connection: a page stuck in a script, or
-        the whole browser hung. Ask both regularly. A page that stops answering is sent home
-        (a new page gets a fresh renderer), and closed if even that doesn't help; a browser
-        that stops answering is dropped, so the reconnect loop takes over (and main.py
-        restarts Chromium if it never comes back)."""
+        the whole browser hung. Ask both regularly. A page that stops answering has its
+        renderer crashed (done on another thread, so it works however stuck the page's
+        scripts are) and the crash handler loads the home screen into a fresh one. A browser
+        that stops answering, or no page to drive at all, means starting the connection
+        over (and main.py restarts Chromium if that doesn't come back)."""
         page_strikes = browser_strikes = 0
         while not ws.closed:
             await asyncio.sleep(WATCH_EVERY)
@@ -324,20 +325,22 @@ class Browser:
                     await ws.close()
                     return
                 continue
-            if not self._session or self._reattaching:
+            if self._reattaching:
                 continue
             try:
+                if not self._session:
+                    raise CDPError("no page attached")
                 await self.send("Runtime.evaluate", {"expression": "1"}, timeout=10)
                 page_strikes = 0
-            except (CDPError, asyncio.TimeoutError):
+            except (CDPError, asyncio.TimeoutError) as exc:
                 page_strikes += 1
-                if page_strikes == WATCH_STRIKES:
-                    log.error("the TV page stopped responding (%s); loading the home screen", self.state.get("url"))
-                    self.spawn(self.send("Page.navigate", {"url": self.settings.launcher_url}))
+                if page_strikes == WATCH_STRIKES and self._session:
+                    log.error("the TV page stopped responding (%s); restarting it", self.state.get("url"))
+                    self.spawn(self.send("Page.crash"))
                 elif page_strikes >= 2 * WATCH_STRIKES:
-                    log.error("the TV page is still stuck; closing it for a new one")
-                    page_strikes = 0
-                    self.spawn(self.send("Target.closeTarget", {"targetId": self._target}, page=False))
+                    log.error("still no working TV page (%s); reconnecting to Chromium", exc)
+                    await ws.close()
+                    return
 
     async def _reattach(self) -> None:
         # Losing the tab fires both targetDestroyed and detachedFromTarget; attach only once.
@@ -349,8 +352,11 @@ class Browser:
         self._script_id = None
         try:
             await self._attach()
-        except CDPError as exc:
-            log.warning("re-attach failed: %s", exc)
+        except (CDPError, asyncio.TimeoutError) as exc:
+            # Start the whole connection over rather than sit detached from the TV.
+            log.warning("re-attach failed (%s); reconnecting", exc)
+            if self._ws and not self._ws.closed:
+                await self._ws.close()
         finally:
             self._reattaching = False
 
