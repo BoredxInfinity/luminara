@@ -306,7 +306,8 @@
   function videoPlaying() {
     const minArea = innerWidth * innerHeight * 0.15;
     for (const v of document.querySelectorAll("video")) {
-      if (v.paused || v.ended || v.readyState < 3 || !v.videoWidth) continue;
+      // Muted autoplaying trailers (site menus) aren't being watched; the screensaver pauses them.
+      if (v.paused || v.ended || v.muted || v.readyState < 3 || !v.videoWidth) continue;
       const r = v.getBoundingClientRect();
       if (r.width * r.height >= minArea) return true;
     }
@@ -328,14 +329,15 @@
       if (m && (m.isConnected || m.currentSrc)) live.push(m);
       else started.delete(ref);  // discarded players
     }
-    const media = [...new Set([...document.querySelectorAll("audio, video"), ...live])];
-    // Spotify leaves playbackState at "none", so the elements decide when it isn't set.
-    const playing = ms.playbackState === "playing" || media.some((m) => !m.paused && !m.ended);
-    const paused = ms.playbackState === "paused" || media.some((m) => m.paused && !m.ended && m.currentTime > 0);
+    // What you can hear decides, not the site's own playbackState: a muted trailer under a
+    // menu (which the screensaver pauses) is no reason to put a record on.
+    const media = [...new Set([...document.querySelectorAll("audio, video"), ...live])].filter((m) => !m.muted);
+    const playing = media.some((m) => !m.paused && !m.ended);
+    const paused = media.some((m) => m.paused && !m.ended && m.currentTime > 0);
     if (!playing && !paused) return null;
     const art = [...(md.artwork || [])].sort((a, b) => parseInt(b.sizes) - parseInt(a.sizes))[0];
     return { title: md.title, artist: md.artist, album: md.album, art: art && art.src, playing,
-             source: "Now playing" };
+             source: playing ? "Now playing" : "Paused" };
   }
 
   let beat = 0;
@@ -345,9 +347,10 @@
     if (saverOn && ++beat % 3 === 0) signal({ saver: true });
     if (saverOn || !cfg.saverMinutes || document.visibilityState !== "visible") return;
     if (Date.now() - lastInput < cfg.saverMinutes * 60000) return;
-    const music = nowPlaying();
-    if (music && music.playing) startSaver();
-    else if (!videoPlaying()) startSaver();
+    // Never over a video someone is watching. (A playing video also counts as "now playing"
+    // music to the page, so that can't be what decides; music without a picture still
+    // brings the screensaver up, as the turntable.)
+    if (!videoPlaying()) startSaver();
   }, 5000);
 
   let rafId = 0, startedAt = 0, metaTimer = 0, lastFrame = 0;
