@@ -41,6 +41,7 @@ KEYS: dict[str, tuple[str, str, int, str]] = {
 }
 MEDIA_ACTIONS = ("playpause", "seek_fwd", "seek_back")
 
+SIGNAL = "__tvboxSignal"  # the binding overlay.js reports through
 RELEASE_AFTER = 1.5  # seconds after going home before Chromium is told to free memory
 
 # Screen mirroring (server/mirror.py): 960x540 JPEGs are sharp enough on a phone and
@@ -138,6 +139,10 @@ class Browser:
         self.screencasting = False
         self._pixel_ratio = 1.0
         self.on_frame: Callable[[dict], None] | None = None  # set by server/mirror.py
+        # The page reports the screensaver going on/off through a private binding.
+        self.saver_on = False
+        self.on_saver: Callable[[bool], Awaitable[None] | None] | None = None
+        self._music_sent = ""
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -179,6 +184,7 @@ class Browser:
             if not fut.done():
                 fut.set_exception(CDPError("connection closed"))
         self._pending.clear()
+        self._set_saver(False)
         if self.state["cdp"]:
             self._update(cdp=False, view="offline")
 
@@ -267,6 +273,8 @@ class Browser:
 
         await self.send("Page.enable")
         await self.send("Inspector.enable")
+        # window.__tvboxSignal(json): how overlay.js tells us the screensaver came on or went.
+        await self.send("Runtime.addBinding", {"name": SIGNAL})
         # Without this, an unfocused window drops synthetic mouse presses (and some
         # players pause on blur). Under cage the window is focused anyway; this is cheap.
         await self.send("Emulation.setFocusEmulationEnabled", {"enabled": True})
@@ -328,6 +336,8 @@ class Browser:
         if method == "Target.targetInfoChanged":
             info = params["targetInfo"]
             if info["targetId"] == self._target:
+                if info["url"] != self.state.get("url"):
+                    self._set_saver(False)  # a new page starts without the screensaver
                 self._update(**self._describe(info["url"], info.get("title", "")))
             elif info["targetId"] in self._popups:
                 self._maybe_fold_popup(info)
@@ -344,6 +354,13 @@ class Browser:
         elif method == "Target.detachedFromTarget":
             if params.get("sessionId") == self._session:
                 self.spawn(self._reattach())
+        elif method == "Runtime.bindingCalled" and session == self._session and params.get("name") == SIGNAL:
+            try:
+                msg = json.loads(params.get("payload") or "{}")
+            except ValueError:
+                return
+            if isinstance(msg, dict) and isinstance(msg.get("saver"), bool):
+                self._set_saver(msg["saver"])
         elif method == "Page.screencastFrame" and session == self._session and self.on_frame:
             self.on_frame(params)
         elif method == "Inspector.targetCrashed" and session == self._session:
@@ -472,6 +489,24 @@ class Browser:
             return
         await self._register_overlay()
         await self.send("Runtime.evaluate", {"expression": f"window.__tvbox && window.__tvbox.configure({json.dumps(config)})"})
+
+    def _set_saver(self, on: bool) -> None:
+        if on == self.saver_on:
+            return
+        self.saver_on = on
+        self._music_sent = ""
+        if self.on_saver:
+            result = self.on_saver(on)
+            if asyncio.iscoroutine(result):
+                self.spawn(result)
+
+    async def music(self, playing: dict | None) -> None:
+        """What's playing on Spotify, for the screensaver's turntable (None: back to the clock)."""
+        payload = json.dumps(playing)
+        if payload == self._music_sent:
+            return
+        await self.send("Runtime.evaluate", {"expression": f"window.__tvbox && window.__tvbox.music({payload})"}, timeout=5)
+        self._music_sent = payload
 
     async def osd(self, message: dict) -> None:
         expr = f"window.__tvbox && window.__tvbox.osd({json.dumps(message)})"

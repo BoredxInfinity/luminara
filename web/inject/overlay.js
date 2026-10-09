@@ -4,7 +4,8 @@
 // - Codec steering: hide VP9/AV1 support so sites pick H.264, which the Pi decodes in
 //   hardware. VP9/AV1 fall back to slow software decoding and make Netflix/Prime stutter.
 // - Screensaver after idle time (never over a playing video): a pulsing colour dot grid,
-//   or a turntable spinning the album art when music is playing (e.g. Spotify).
+//   or a turntable spinning the album art when music is playing: on your Spotify account
+//   anywhere (the box checks while the screensaver is up, server/spotify.py), or in the page.
 // - The remote's cursor dot, and on-screen messages: volume, toasts, "updating".
 // Everything visual lives in a shadow root so page CSS can't touch it, and is built
 // without innerHTML because YouTube and others enforce Trusted Types.
@@ -35,14 +36,14 @@
   if (window.top !== window || window.__tvbox) return;
 
   // No scrollbars on a TV. Chromium's own are off (--hide-scrollbars in kiosk.sh); this
-  // hides the ones sites draw themselves (OverlayScrollbars, used by Spotify).
+  // hides the ones sites draw themselves (OverlayScrollbars, used by Spotify's web player).
   try {
     const sheet = new CSSStyleSheet();
     sheet.replaceSync(".os-scrollbar { display: none !important; }");
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
   } catch { /* very old engine: leave them */ }
 
-  // Some players (Spotify) play through an <audio> that's never put in the page, where
+  // Some players (e.g. Spotify's web player) play through an <audio> that's never put in the page, where
   // querySelectorAll can't see it. We run before the page's scripts, so remember every
   // element that starts playing.
   // Held weakly: a player the page throws away can still be freed.
@@ -265,10 +266,7 @@
     timers.dot = setTimeout(() => (dot.style.opacity = "0"), 3000);
   }, { capture: true, passive: true });
 
-  const onSpotify = /(^|\.)spotify\.com$/.test(location.hostname);
-
   function videoPlaying() {
-    if (onSpotify) return false;  // Spotify's looping "Canvas" clips aren't something you watch
     const minArea = innerWidth * innerHeight * 0.15;
     for (const v of document.querySelectorAll("video")) {
       if (v.paused || v.ended || v.readyState < 3 || !v.videoWidth) continue;
@@ -278,7 +276,12 @@
     return false;
   }
 
+  // What's playing on your Spotify account, sent by the box while the screensaver is up
+  // (server/spotify.py). It wins over anything the page itself reports.
+  let remoteMusic = null;
+
   function nowPlaying() {
+    if (remoteMusic) return remoteMusic;
     const ms = navigator.mediaSession;
     const md = ms && ms.metadata;
     if (!md || !md.title) return null;
@@ -295,7 +298,7 @@
     if (!playing && !paused) return null;
     const art = [...(md.artwork || [])].sort((a, b) => parseInt(b.sizes) - parseInt(a.sizes))[0];
     return { title: md.title, artist: md.artist, album: md.album, art: art && art.src, playing,
-             source: onSpotify ? "Playing on Spotify" : "Now playing" };
+             source: "Now playing" };
   }
 
   setInterval(() => {
@@ -320,9 +323,15 @@
     pausedUnder = [];
   }
 
+  // Tell the box, so it checks Spotify only while the screensaver is up.
+  function signal(msg) {
+    try { if (typeof window.__tvboxSignal === "function") window.__tvboxSignal(JSON.stringify(msg)); } catch { /* not under the box */ }
+  }
+
   function startSaver() {
     const u = ensure();
     saverOn = true;
+    signal({ saver: true });
     pauseTrailers();
     startedAt = performance.now();
     u.saver.classList.remove("leaving");
@@ -337,6 +346,8 @@
   function stopSaver() {
     const u = ensure();
     saverOn = false;
+    remoteMusic = null;
+    signal({ saver: false });
     resumeTrailers();
     clearInterval(metaTimer);
     u.saver.classList.add("leaving");
@@ -621,6 +632,10 @@
       } else if (msg.kind === "ready") {  // the controller (re)connected: any update is done
         u.updating.classList.remove("show");
       }
+    },
+    music(m) {  // from the box: {title, artist, album, art, playing, source}, or null
+      remoteMusic = m && m.title ? m : null;
+      if (saverOn) refreshSaver();
     },
     saver(on) {  // for testing from the console / CDP
       if (on && !saverOn) startSaver();

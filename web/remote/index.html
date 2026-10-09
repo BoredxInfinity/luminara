@@ -153,8 +153,41 @@
         <h3>Screensaver</h3>
         <div class="field"><span>Start after</span><div id="set-saver" class="seg"></div></div>
         <label class="switch-row"><span>Show the date<small>The time is always drawn by the dots.</small></span><input type="checkbox" id="set-saver-clock" class="switch"></label>
-        <p class="note">Never covers a playing video. While music plays (Spotify), it shows the album on a turntable.</p>
+        <p class="note">Never covers a playing video. While music plays, it shows the album on a turntable.</p>
         <button id="set-saver-preview" class="pill small">Preview on the TV</button>
+      </section>
+      <section>
+        <h3>Spotify</h3>
+        <p class="note">While the screensaver is up, the TV checks what's playing on your Spotify account, on any device, and shows it on the turntable. It never checks while you're using the TV.</p>
+        <div id="sp-connected" class="stack-tight" hidden>
+          <p>Connected as <strong id="sp-user"></strong></p>
+          <div class="field"><span>Check every</span><div id="set-spotify-poll" class="seg"></div></div>
+          <p class="note">After a minute with nothing playing, the screensaver goes back to the clock.</p>
+          <div class="row"><button id="sp-disconnect" class="pill small danger">Disconnect</button></div>
+        </div>
+        <div id="sp-setup" hidden>
+          <ol class="steps">
+            <li>
+              <strong>Create a Spotify app.</strong>
+              <a class="pill small" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Open Spotify for Developers</a>
+              <span class="note">Create app, give it any name, tick “Web API”, and add this Redirect URI exactly:</span>
+              <span class="copy-row"><code id="sp-redirect"></code><button id="sp-copy" class="pill small">Copy</button></span>
+              <span class="note">Spotify requires the app's owner to have Premium.</span>
+            </li>
+            <li>
+              <strong>Paste the app's Client ID.</strong>
+              <input id="sp-client" class="field-input" placeholder="Client ID" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="64">
+            </li>
+            <li>
+              <strong>Log in to Spotify.</strong>
+              <button id="sp-login" class="pill small accent">Log in with Spotify</button>
+              <span class="note">After you agree, Spotify opens a page that won't load. That's expected: copy that page's address and paste it here.</span>
+              <input id="sp-paste" class="field-input" placeholder="http://127.0.0.1:8080/spotify/callback?code=…" autocapitalize="off" autocorrect="off" spellcheck="false">
+              <button id="sp-finish" class="pill small accent">Finish</button>
+            </li>
+          </ol>
+          <p id="sp-error" class="error" role="alert"></p>
+        </div>
       </section>
       <section>
         <h3>Sound</h3>

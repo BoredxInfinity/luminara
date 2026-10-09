@@ -10,6 +10,7 @@ log = logging.getLogger("tvbox.settings")
 
 SAVER_CHOICES = (0, 1, 2, 5, 10, 15, 30)  # minutes; 0 = off
 VOLUME_CHOICES = (0, 25, 50, 75, 100)  # percent at boot; 0 = leave alone
+SPOTIFY_POLL_CHOICES = (5, 10, 15, 30, 60)  # seconds between "what's playing?" checks
 
 DEFAULTS = {
     "hidden_apps": [],         # service ids not shown on the TV or remote
@@ -20,6 +21,7 @@ DEFAULTS = {
     "lite_browser": True,      # fewer Chromium processes (no site isolation); needs a display restart
     "auto_update_check": True,
     "update_dismissed": "",    # "Later" on this version hides the prompt until a newer one
+    "spotify_poll_seconds": 30,  # how often the screensaver asks Spotify what's playing
 }
 
 # Settings Chromium reads at startup; changing them means restarting the display.
@@ -33,6 +35,8 @@ def _valid(key: str, value, service_ids: set[str]) -> bool:
         return value in SAVER_CHOICES
     if key == "boot_volume":
         return value in VOLUME_CHOICES
+    if key == "spotify_poll_seconds":
+        return value in SPOTIFY_POLL_CHOICES
     if key == "update_dismissed":
         return isinstance(value, str) and len(value) <= 64
     return isinstance(value, bool) and isinstance(DEFAULTS[key], bool)
@@ -45,6 +49,8 @@ class UserSettings:
         self.values = {**DEFAULTS, "boot_volume": boot_volume_default if boot_volume_default in VOLUME_CHOICES else 100}
         try:
             saved = json.loads(self._file.read_text())
+            if isinstance(saved.get("hidden_apps"), list):  # forget apps that no longer exist
+                saved["hidden_apps"] = [a for a in saved["hidden_apps"] if a in service_ids]
             self.values.update({k: v for k, v in saved.items() if k in DEFAULTS and _valid(k, v, service_ids)})
         except FileNotFoundError:
             pass

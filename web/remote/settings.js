@@ -4,7 +4,8 @@
 
 const sheet = $("settings");
 let prefs = {};
-let choices = { saver_minutes: [0, 1, 2, 5, 10, 15, 30], boot_volume: [0, 25, 50, 75, 100] };
+let choices = { saver_minutes: [0, 1, 2, 5, 10, 15, 30], boot_volume: [0, 25, 50, 75, 100], spotify_poll_seconds: [5, 10, 15, 30, 60] };
+let spotify = {};
 
 async function saveSetting(changes) {
   Object.assign(prefs, changes);
@@ -62,6 +63,8 @@ function paintSettings() {
     (v) => (v === 0 ? "Off" : `${v} min`), (v) => saveSetting({ saver_minutes: v }));
   segmented($("set-volume"), choices.boot_volume, prefs.boot_volume,
     (v) => (v === 0 ? "As left" : `${v}%`), (v) => saveSetting({ boot_volume: v }));
+  segmented($("set-spotify-poll"), choices.spotify_poll_seconds, prefs.spotify_poll_seconds,
+    (v) => `${v} s`, (v) => saveSetting({ spotify_poll_seconds: v }));
   $("set-saver-clock").checked = prefs.saver_clock;
   $("set-h264").checked = prefs.prefer_h264;
   $("set-lite").checked = prefs.lite_browser;
@@ -108,6 +111,81 @@ async function loadAbout() {
   }));
 }
 
+// ---- Spotify: shown on the screensaver's turntable (server/spotify.py) ----------------
+
+function paintSpotify() {
+  $("sp-connected").hidden = !spotify.connected;
+  $("sp-setup").hidden = !!spotify.connected;
+  $("sp-user").textContent = spotify.user || "your account";
+  $("sp-redirect").textContent = spotify.redirect_uri || "";
+  if (spotify.client_id && !$("sp-client").value) $("sp-client").value = spotify.client_id;
+}
+
+async function loadSpotify() {
+  const res = await fetch("/api/spotify").catch(() => null);
+  if (res && res.ok) { spotify = await res.json(); paintSpotify(); }
+}
+
+function spotifyError(text) { $("sp-error").textContent = text || ""; }
+
+// Phones on plain HTTP have no clipboard API: fall back to a hidden text box.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* fall back */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0";
+  document.body.append(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  return ok;
+}
+
+$("sp-copy").addEventListener("click", async () => {
+  buzz();
+  toast((await copyText(spotify.redirect_uri)) ? "Copied" : "Press and hold the address to copy it");
+});
+
+$("sp-login").addEventListener("click", async () => {
+  buzz();
+  spotifyError("");
+  const clientId = $("sp-client").value.trim();
+  if (!clientId) return spotifyError("Paste the Client ID from your Spotify app first.");
+  // Open the tab now, while this still counts as a tap; phones block pop-ups opened later.
+  const tab = window.open("", "_blank");
+  const res = await fetch("/api/spotify/login", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: clientId }),
+  }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (!res || !res.ok) { if (tab) tab.close(); return spotifyError(data.error || "Couldn't reach the TV box"); }
+  if (tab) tab.location.href = data.url;
+  else location.href = data.url;  // pop-up blocked: go in this tab, then come back
+});
+
+$("sp-finish").addEventListener("click", async () => {
+  buzz();
+  spotifyError("");
+  const url = $("sp-paste").value.trim();
+  if (!url) return spotifyError("Paste the address of the page Spotify opened after you logged in.");
+  $("sp-finish").disabled = true;
+  const res = await fetch("/api/spotify/finish", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+  }).catch(() => null);
+  $("sp-finish").disabled = false;
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (!res || !res.ok) return spotifyError(data.error || "Couldn't reach the TV box");
+  spotify = data;
+  $("sp-paste").value = "";
+  paintSpotify();
+  toast(data.user ? `Spotify connected as ${data.user}` : "Spotify connected");
+});
+
+$("sp-disconnect").addEventListener("click", async () => {
+  if (!confirm("Disconnect Spotify? The screensaver will stop showing what's playing.")) return;
+  const res = await api("/api/spotify/disconnect");
+  if (res && res.ok) { spotify = await res.json(); paintSpotify(); }
+});
+
 let aboutTimer = 0;
 async function openSettings() {
   buzz();
@@ -119,6 +197,7 @@ async function openSettings() {
   $("set-restart-note").hidden = true;
   sheet.showModal();
   paintSettings();
+  loadSpotify();
   loadAbout();
   aboutTimer = setInterval(loadAbout, 5000);  // live memory / temperature
 }

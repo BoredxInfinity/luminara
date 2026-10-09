@@ -316,3 +316,15 @@ a.pill.accent { color: #fff; }
 .cast-status { font-weight: 600; }
 .cast-status.live { color: var(--ok); }
 .cast-status.bad { color: var(--bad); }
+
+/* ---- Settings → Spotify ---- */
+.stack-tight { display: flex; flex-direction: column; gap: 12px; }
+.field-input {
+  width: 100%; min-height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); font: inherit; font-size: 15px; user-select: text; -webkit-user-select: text;
+}
+.copy-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.copy-row code {
+  flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+  font-size: 13px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all;
+}

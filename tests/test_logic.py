@@ -17,6 +17,7 @@ BY_ID = {s.id: s for s in SERVICES}
     ("https://www.hotstar.com/in/home", "jiohotstar"),
     ("https://www.amazon.in/ap/signin", "prime"),
     ("https://www.youtube.com/tv#/watch", "youtube"),
+    ("https://open.spotify.com/", None),  # no longer an app
     ("https://notnetflix.com/", None),
     ("http://127.0.0.1:8080/tv", None),
     ("about:blank", None),
@@ -27,7 +28,8 @@ def test_service_for_url(url, expected):
 
 
 def test_services_have_unique_ids_and_urls():
-    assert len(BY_ID) == len(SERVICES) == 5
+    assert len(BY_ID) == len(SERVICES) == 4
+    assert "spotify" not in BY_ID  # music shows on the screensaver instead (server/spotify.py)
     assert all(s.url.startswith("https://") for s in SERVICES)
 
 
@@ -37,7 +39,9 @@ def test_media_keys_default_and_override():
     assert resolve_key("playpause", BY_ID["youtube"]) == "mediaplaypause"
     assert resolve_key("playpause", None) == "space"
     assert resolve_key("up", None) == "up"
-    assert resolve_key("seek_fwd", BY_ID["spotify"]) == "shift+right"
+    from server.config import Service
+    shifted = Service(id="x", name="X", url="https://x.example/", keys={"seek_fwd": "shift+right"})
+    assert resolve_key("seek_fwd", shifted) == "shift+right"
     with pytest.raises(KeyError):
         resolve_key("nope", None)
 
@@ -340,3 +344,99 @@ def test_clear_to_home_closes_strays_unloads_the_app_and_frees_memory(tmp_path, 
     assert ("Target.closeTarget", {"targetId": "popup"}) in sent
     assert ("Page.navigate", {"url": b.settings.launcher_url}) in sent
     assert methods.index("Page.navigate") < methods.index("Memory.simulatePressureNotification")
+
+
+def test_spotify_turntable_shows_while_playing_and_returns_to_the_clock_after_a_quiet_minute():
+    from server.main import SPOTIFY_QUIET, spotify_step
+
+    song = {"title": "Closer", "playing": True}
+    paused = {**song, "playing": False}
+    act, shown, quiet = spotify_step(None, 0, False, None)          # nothing playing: clock
+    assert act is None and not shown
+    act, shown, quiet = spotify_step(paused, 5, shown, quiet)       # paused alone doesn't show
+    assert act is None and not shown
+    act, shown, quiet = spotify_step(song, 10, shown, quiet)        # playing: turntable
+    assert act == "show" and shown and quiet is None
+    act, shown, quiet = spotify_step(paused, 40, shown, quiet)      # paused: stays, paused
+    assert act == "show" and shown and quiet == 40
+    act, shown, quiet = spotify_step(None, 40 + SPOTIFY_QUIET - 1, shown, quiet)  # under a minute
+    assert act is None and shown
+    act, shown, quiet = spotify_step(None, 40 + SPOTIFY_QUIET, shown, quiet)      # a minute: clock
+    assert act == "clear" and not shown
+
+
+def test_spotify_login_link_uses_pkce_and_a_loopback_redirect(tmp_path):
+    import asyncio
+    import base64
+    import hashlib
+    from urllib.parse import parse_qs, urlsplit
+
+    from server.spotify import Spotify, SpotifyError
+
+    sp = Spotify(tmp_path, 8080)
+    with pytest.raises(SpotifyError):
+        sp.login_url("not a client id!")
+    q = parse_qs(urlsplit(sp.login_url("0123456789abcdef0123456789abcdef")).query)
+    assert q["redirect_uri"] == ["http://127.0.0.1:8080/spotify/callback"]  # Spotify allows loopback http
+    assert q["code_challenge_method"] == ["S256"] and "client_secret" not in q
+    state = q["state"][0]
+    verifier = sp._pending[state]["verifier"]
+    assert q["code_challenge"][0] == base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+
+    sent = {}
+
+    async def fake_token(http, client_id, form):
+        sent.update(form, client_id=client_id)
+        return {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}
+
+    async def fake_get(http, path):
+        return {"display_name": "Arav"}
+
+    sp._token_request, sp._get = fake_token, fake_get
+    pasted = f"http://127.0.0.1:8080/spotify/callback?code=C0DE&state={state}"
+    assert asyncio.run(sp.finish(None, pasted)) == "Arav"
+    assert sent["code_verifier"] == verifier and sent["code"] == "C0DE"
+    assert sp.connected and (tmp_path / "spotify.json").stat().st_mode & 0o077 == 0  # private file
+    with pytest.raises(SpotifyError):                     # a login link works once
+        asyncio.run(sp.finish(None, pasted))
+
+
+def test_spotify_player_answer_becomes_turntable_info(tmp_path):
+    import asyncio
+
+    from server.spotify import Spotify
+
+    sp = Spotify(tmp_path, 8080)
+    answers = {
+        "song": {"is_playing": True, "device": {"name": "Arav's iPhone"}, "item": {
+            "type": "track", "name": "Closer", "artists": [{"name": "The Chainsmokers"}, {"name": "Halsey"}],
+            "album": {"name": "Closer", "images": [{"url": "big", "width": 640}, {"url": "mid", "width": 300}]}}},
+        "episode": {"is_playing": False, "device": {}, "item": {
+            "type": "episode", "name": "Ep 1", "images": [], "show": {"name": "A Show", "publisher": "Someone",
+                                                                     "images": [{"url": "s", "width": 300}]}}},
+    }
+    picked = []
+
+    async def fake_art(http, images):
+        picked.append(min(images, key=lambda i: abs((i.get("width") or 300) - 300))["url"])
+        return "data:image/jpeg;base64,AA=="
+
+    sp._art_data = fake_art
+    for kind, answer in answers.items():
+        async def fake_get(http, path, answer=answer):
+            return answer
+        sp._get = fake_get
+        info = asyncio.run(sp.now_playing(None))
+        if kind == "song":
+            assert info["artist"] == "The Chainsmokers, Halsey" and info["playing"]
+            assert info["source"] == "Playing on Spotify · Arav's iPhone"
+        else:
+            assert info["album"] == "A Show" and info["artist"] == "Someone" and not info["playing"]
+            assert info["source"] == "Paused on Spotify"
+    assert picked == ["mid", "s"]  # the ~300 px image
+
+    async def nothing(http, path):
+        return None  # 204: nothing playing
+    sp._get = nothing
+    assert asyncio.run(sp.now_playing(None)) is None

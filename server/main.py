@@ -24,7 +24,8 @@ from .config import ROOT, WEB_DIR, Settings, load_services, load_settings
 from .cast import Cast
 from .logos import Logos
 from .mirror import Mirror
-from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
+from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, SPOTIFY_POLL_CHOICES, VOLUME_CHOICES, UserSettings
+from .spotify import Spotify, SpotifyError
 from .system import System, system_info
 from .tls import Certificate, ensure_certificate
 from .updater import Updater
@@ -35,6 +36,7 @@ LOCALHOST = {"127.0.0.1", "::1"}
 VALID_KEYS = set(KEYS) | set(MEDIA_ACTIONS) | {"back"}
 MAX_TEXT = 500
 MAX_DELTA = 400.0
+SPOTIFY_QUIET = 60  # seconds without music before the screensaver goes back to the clock
 
 
 class Hub:
@@ -51,6 +53,9 @@ class Hub:
         self.browser = Browser(settings, self.services, self.on_browser_change)
         self.mirror = Mirror(self.browser)
         self.cast = Cast(self.browser)
+        self.spotify = Spotify(settings.data_dir, settings.port)
+        self._spotify_watch: asyncio.Task | None = None
+        self.browser.on_saver = self.on_saver
         self.tls: Certificate | None = None  # set by main() when mkcert made a certificate
         self.browser.page_config = self.page_config()
         self.clients: dict[web.WebSocketResponse, str] = {}  # socket -> "tv" | "remote"
@@ -148,6 +153,36 @@ class Hub:
                 self.osd(kind="toast", icon="update", text="Update available · install it from Settings on your phone")
         await self.broadcast()
 
+    # ---- Spotify on the screensaver ------------------------------------------------
+
+    def on_saver(self, on: bool) -> None:
+        """The screensaver came on or went away. Spotify is only asked while it's up."""
+        if self._spotify_watch:
+            self._spotify_watch.cancel()
+            self._spotify_watch = None
+        if on and self.spotify.connected:
+            self._spotify_watch = asyncio.create_task(self.watch_spotify())
+
+    async def watch_spotify(self) -> None:
+        """While the screensaver shows: what's playing on the account, every few seconds.
+        Playing shows the turntable; paused or stopped for over a minute goes back to the clock."""
+        shown, quiet_since = False, None
+        while True:
+            try:
+                music = await self.spotify.now_playing(self.http)
+            except Exception as exc:  # noqa: BLE001 - a bad answer mustn't end the watch
+                log.debug("Spotify check failed: %s", exc)  # keep whatever is showing
+            else:
+                action, shown, quiet_since = spotify_step(music, time.monotonic(), shown, quiet_since)
+                try:
+                    if action == "show":
+                        await self.browser.music(music)
+                    elif action == "clear":
+                        await self.browser.music(None)
+                except (CDPError, asyncio.TimeoutError):
+                    pass
+            await asyncio.sleep(self.prefs["spotify_poll_seconds"])
+
     async def on_install_done(self, ok: bool) -> None:
         """Only reached when the update didn't restart us: it failed, or there was nothing to do."""
         self.osd(kind="ready")  # lift the "Updating…" curtain
@@ -218,6 +253,22 @@ routes = web.RouteTableDef()
 
 
 # ---- helpers ---------------------------------------------------------------
+
+def spotify_step(music: dict | None, now: float, shown: bool, quiet_since: float | None):
+    """One Spotify check during the screensaver -> (action, shown, quiet_since).
+    Music playing shows the turntable. Once shown, a paused or stopped player keeps it
+    (paused) until SPOTIFY_QUIET seconds pass without music; then back to the clock.
+    Paused music never brings the turntable up by itself."""
+    playing = bool(music and music.get("playing"))
+    quiet_since = None if playing else (quiet_since if quiet_since is not None else now)
+    if playing:
+        return "show", True, quiet_since
+    if shown and now - quiet_since >= SPOTIFY_QUIET:
+        return "clear", False, quiet_since
+    if shown and music:
+        return "show", True, quiet_since  # paused: the record stops, the arm lifts
+    return None, shown, quiet_since
+
 
 def lan_ip() -> str:
     """Address the phone should use. UDP connect sends no packets."""
@@ -438,7 +489,8 @@ async def pair(request: web.Request):
 @routes.get("/api/settings")
 async def get_settings(request: web.Request):
     return web.json_response({"values": request.app[HUB].prefs.values,
-                              "choices": {"saver_minutes": SAVER_CHOICES, "boot_volume": VOLUME_CHOICES}})
+                              "choices": {"saver_minutes": SAVER_CHOICES, "boot_volume": VOLUME_CHOICES,
+                                          "spotify_poll_seconds": SPOTIFY_POLL_CHOICES}})
 
 
 @routes.post("/api/settings")
@@ -450,6 +502,59 @@ async def set_settings(request: web.Request):
         raise web.HTTPBadRequest(text=str(exc))
     await hub.apply_settings(changed)
     return ok(values=hub.prefs.values, restart_display=bool(changed & NEEDS_DISPLAY_RESTART))
+
+
+@routes.get("/api/spotify")
+async def spotify_status(request: web.Request):
+    return web.json_response(request.app[HUB].spotify.status())
+
+
+@routes.post("/api/spotify/login")
+async def spotify_login(request: web.Request):
+    """The Spotify login link for the phone to open."""
+    try:
+        url = request.app[HUB].spotify.login_url(str((await read_json(request)).get("client_id", "")))
+    except SpotifyError as exc:
+        return fail(str(exc), 400)
+    return ok(url=url)
+
+
+@routes.post("/api/spotify/finish")
+async def spotify_finish(request: web.Request):
+    """The address Spotify sent the phone to after login, pasted back from the phone."""
+    hub = request.app[HUB]
+    try:
+        user = await hub.spotify.finish(hub.http, str((await read_json(request)).get("url", "")))
+    except SpotifyError as exc:
+        return fail(str(exc), 400)
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return fail("Couldn't reach Spotify from the TV box", 502)
+    if hub.browser.saver_on:
+        hub.on_saver(True)  # start showing it now if the screensaver is up
+    return ok(user=user, **hub.spotify.status())
+
+
+@routes.post("/api/spotify/disconnect")
+async def spotify_disconnect(request: web.Request):
+    hub = request.app[HUB]
+    hub.spotify.disconnect()
+    hub.on_saver(False)
+    return ok(**hub.spotify.status())
+
+
+@routes.get("/spotify/callback")
+async def spotify_callback(request: web.Request):
+    """Only reached when the login happened on the TV itself (e.g. through mirror mode);
+    on a phone this address doesn't load and is pasted into Settings instead."""
+    hub = request.app[HUB]
+    if request.remote not in LOCALHOST:
+        raise web.HTTPForbidden(text="paste this address into the remote's Settings → Spotify")
+    try:
+        user = await hub.spotify.finish(hub.http, str(request.url))
+        text = f"Spotify is connected{(' as ' + user) if user else ''}. You can close this page."
+    except (SpotifyError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        text = f"Couldn't connect Spotify: {exc}"
+    return web.Response(text=text, content_type="text/plain")
 
 
 @routes.get("/api/system")
@@ -667,6 +772,7 @@ async def _shutdown(app: web.Application) -> None:
 
 
 async def _cleanup(app: web.Application) -> None:
+    app[HUB].on_saver(False)
     for job in app[HUB].jobs:
         job.cancel()
     await asyncio.gather(*app[HUB].jobs, return_exceptions=True)

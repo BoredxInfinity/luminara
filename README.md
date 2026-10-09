@@ -1,6 +1,6 @@
 # Luminara: Pi TV Box
 
-This turns a Raspberry Pi 4 (2 GB) into a streaming box for Netflix, Prime Video, JioHotstar, YouTube and Spotify. Any phone or laptop on the home Wi-Fi can be the remote.
+This turns a Raspberry Pi 4 (2 GB) into a streaming box for Netflix, Prime Video, JioHotstar and YouTube. While the screensaver is up, it shows what's playing on your Spotify account. Any phone or laptop on the home Wi-Fi can be the remote.
 
 ```
  phone / laptop ──HTTP + WebSocket──▶  controller (Python, :8080)  ──CDP, localhost:9222──▶  Chromium (kiosk, in cage)
@@ -162,7 +162,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - It's kept light: 20 frames a second while the particles only shimmer (30 while they move), and muted trailers playing behind it are paused until you're back.
   - The **Screensaver** button on the remote starts it right away (the turntable if music is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
-  - **While music plays** (Spotify, or any site that publishes "now playing" info), it shows a turntable with the album art spinning on the record, plus the song, artist and album.
+  - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), or in the page on the TV, it shows a turntable with the album art spinning on the record, plus the song, artist and album. See [Spotify on the screensaver](#spotify-on-the-screensaver).
 - **D-pad on Netflix, Prime Video and JioHotstar:** these are mouse websites (only YouTube has a real TV interface in a browser), so the arrows move a white focus ring between titles, buttons and menus, and OK clicks.
   - Right at the end of a row pages the row, like a TV app. Up/down go row by row.
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.
@@ -203,6 +203,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
 |---|---|
 | Apps | Show or hide each app on the TV and remote |
 | Screensaver | Off / 1–30 minutes, show the time, preview it on the TV |
+| Spotify | Connect your account, how often to check what's playing (5–60 s, default 30), disconnect |
 | Sound | Volume when the box starts (or leave it as it was) |
 | Performance | Smooth video (H.264), Lite browser (applies after **Restart TV display**) |
 | Updates | Check automatically, Check now, Install |
@@ -220,11 +221,23 @@ Logos and icons aren't stored in this repo. The Pi downloads them from Wikimedia
 | Service icons | Opens the service (with an opening animation on the TV) |
 | Home / Back | Launcher / previous page (on YouTube, Back is the TV app's own back) |
 | D-pad, OK, Esc | Arrow keys, Enter, Escape. Tap a direction or swipe anywhere on the pad; hold to repeat |
-| ⏪ ⏯ ⏩ | Seek / play-pause (per-service keys come from `services.json`; Spotify seeks with Shift+arrow) |
+| ⏪ ⏯ ⏩ | Seek / play-pause (per-service keys come from `services.json`, e.g. `"shift+right"`) |
 | ⚙ | Settings |
 | Touchpad tab | Drag to move a cursor on the TV, tap to click, two fingers to scroll |
 | Keyboard tab | Types into whatever is focused on the TV |
 | Laptop keyboard | Arrows, Enter, Esc, Backspace (Back) and Space (play/pause) are forwarded |
+
+## Spotify on the screensaver
+
+Spotify isn't an app on the TV. Instead, while the screensaver is up, the box asks Spotify what's playing on your account (on your phone, laptop, a speaker, anywhere) and shows it on the turntable.
+
+- **Only during the screensaver.** The TV page tells the controller when the screensaver comes on and goes away; it checks Spotify only in between. Spotify has no webhook or push for playback, so it asks every 30 s by default (5–60 s in Settings).
+- Music starting shows the turntable at the next check. Paused, the record stops and the arm lifts. After a minute with nothing playing, the screensaver goes back to the clock.
+- **Connecting (once, from Settings → Spotify on your phone):**
+  1. At [Spotify for Developers](https://developer.spotify.com/dashboard), create an app (any name, tick "Web API") and add the Redirect URI shown in Settings: `http://127.0.0.1:8080/spotify/callback`. Spotify only allows HTTPS or loopback addresses there, which is why it's 127.0.0.1. Spotify requires the app's owner to have Premium, and allows up to 5 users per app.
+  2. Paste the app's Client ID into Settings and tap **Log in with Spotify**.
+  3. After you agree, Spotify sends your phone to the 127.0.0.1 address, which doesn't load on a phone. That's expected: copy the page's address, paste it into Settings and tap **Finish**. The box completes the login itself.
+- It uses PKCE, so there's no client secret anywhere. Only read access to what's playing is requested. Tokens are stored in `~/.local/state/tvbox/spotify.json` (readable only by the box's user) and refreshed automatically; **Disconnect** forgets them.
 
 ## Secure remote (HTTPS) for screen sharing
 
@@ -306,6 +319,7 @@ Environment variables: `TVBOX_PORT` (8080), `TVBOX_HTTPS_PORT` (8443), `TVBOX_CD
 | `web/remote/mirror.js`, `server/mirror.py` | mirror mode: the TV picture on the phone, touches back to the TV |
 | `web/remote/cast.js`, `web/cast/`, `server/cast.py` | screen sharing: laptop → TV over WebRTC, and the TV's receiver page |
 | `server/tls.py` | the box's HTTPS certificate (mkcert) |
+| `server/spotify.py` | Spotify login (PKCE) and "what's playing", for the screensaver |
 | `deploy/` | systemd units (incl. `tvbox-update.service`), cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
 | `install.sh` | one-time Pi setup |
 | `update.sh` | pull and apply on the Pi |
