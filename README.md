@@ -285,6 +285,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 
 - **Logs:** `journalctl -u tvbox-server -u tvbox-kiosk -f`. They're kept across reboots in a fixed 50 MB (5 MB files; the oldest is dropped as a new one starts). Add `-b -1` for the previous boot, or `journalctl -u tvbox-server | grep health` for the half-hourly health lines. Chromium's own errors are in the `tvbox-kiosk` log.
 - **Update logs:** `journalctl -u tvbox-update`
+- **Measure smoothness and load:** `.venv/bin/python scripts/bench.py frames 6` (frames drawn and dropped, CPU per process), `... mem`, `... cpu 5`; see the top of `scripts/bench.py`.
 - **Reset the PIN and forget all remotes:** use **Settings → Phones → Forget all phones**.
 - **Turn off the PIN:** add `Environment=TVBOX_PIN=0` to `deploy/tvbox-server.service`, then push and update.
 - **Audio goes to the wrong output:** HDMI is preferred automatically (`deploy/wireplumber-hdmi.conf`). To override it, run `wpctl status`, then `wpctl set-default <id>`.
