@@ -299,3 +299,20 @@ body.mirroring > :not(.mirror):not(dialog):not(.toast):not(.overlay) { display: 
   .mirror-bar { order: 2; flex-direction: column; width: 68px; border-top: 0; border-left: 1px solid var(--line); }
   .mirror-type { position: absolute; left: env(safe-area-inset-left); right: calc(68px + env(safe-area-inset-right)); bottom: env(safe-area-inset-bottom); }
 }
+
+/* ---- screen sharing (laptop → TV) ---- */
+#cast-btn.live { background: var(--accent); border-color: transparent; color: #fff; }
+a.pill { color: var(--fg); text-decoration: none; }
+a.pill.accent { color: #fff; }
+.steps { display: flex; flex-direction: column; gap: 18px; list-style: none; counter-reset: step; }
+.steps li { position: relative; padding-left: 36px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.steps li::before {
+  counter-increment: step; content: counter(step); position: absolute; left: 0; top: -2px;
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface-2); color: var(--fg); font-size: 13px; font-weight: 700;
+}
+.steps .note { line-height: 1.45; }
+.steps .note code { color: var(--fg); }
+.cast-status { font-weight: 600; }
+.cast-status.live { color: var(--ok); }
+.cast-status.bad { color: var(--bad); }

@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import signal
 import socket
 import ssl
 import time
@@ -20,10 +21,12 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from .auth import COOKIE, Auth, Locked
 from .browser import KEYS, MEDIA_ACTIONS, Browser, CDPError
 from .config import ROOT, WEB_DIR, Settings, load_services, load_settings
+from .cast import Cast
 from .logos import Logos
 from .mirror import Mirror
 from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
 from .system import System, system_info
+from .tls import Certificate, ensure_certificate
 from .updater import Updater
 
 log = logging.getLogger("tvbox")
@@ -47,6 +50,8 @@ class Hub:
         self.updater = Updater(ROOT, settings.data_dir)
         self.browser = Browser(settings, self.services, self.on_browser_change)
         self.mirror = Mirror(self.browser)
+        self.cast = Cast(self.browser)
+        self.tls: Certificate | None = None  # set by main() when mkcert made a certificate
         self.browser.page_config = self.page_config()
         self.clients: dict[web.WebSocketResponse, str] = {}  # socket -> "tv" | "remote"
         self.volume = {"volume": None, "muted": False}
@@ -189,6 +194,16 @@ class Hub:
     def remote_url(self) -> str:
         return f"http://{lan_ip()}:{self.settings.port}/remote"
 
+    def secure_urls(self) -> dict:
+        """The HTTPS remote (needed for screen sharing), by name and by address."""
+        if not self.tls:
+            return {}
+        port, host = self.settings.https_port, socket.gethostname().split(".")[0].lower()
+        urls = {"secure_url": f"https://{host}.local:{port}/remote"}
+        if lan_ip() in self.tls.names:
+            urls["secure_ip_url"] = f"https://{lan_ip()}:{port}/remote"
+        return urls
+
     def qr_svg(self) -> str:
         url = self.remote_url() + (f"?pin={self.auth.pin}" if self.auth else "")
         if not self._qr or self._qr[0] != url:
@@ -273,6 +288,25 @@ async def remote_page(request: web.Request):
     return web.FileResponse(WEB_DIR / "remote" / "index.html")
 
 
+@routes.get("/cast")
+async def cast_page(request: web.Request):
+    """The TV side of screen sharing; only the TV itself shows it."""
+    if request.remote not in LOCALHOST:
+        raise web.HTTPForbidden(text="this page is for the TV")
+    return web.FileResponse(WEB_DIR / "cast" / "index.html")
+
+
+@routes.get("/ca.crt")
+async def ca_certificate(request: web.Request):
+    """The box's certificate authority (public part only), for devices to trust once."""
+    tls = request.app[HUB].tls
+    if not tls:
+        raise web.HTTPNotFound(text="this box has no HTTPS certificate (is mkcert installed?)")
+    host = socket.gethostname().split(".")[0].lower()
+    return web.Response(body=tls.ca.read_bytes(), content_type="application/x-x509-ca-cert", headers={
+        "Content-Disposition": f'attachment; filename="luminara-{host}.crt"', "Cache-Control": "no-store"})
+
+
 @routes.get("/healthz")
 async def healthz(request: web.Request):
     return web.Response(text="ok")
@@ -301,7 +335,7 @@ async def logo(request: web.Request):
 async def info(request: web.Request):
     hub = request.app[HUB]
     data = {"remote_url": hub.remote_url(), "hostname": socket.gethostname().split(".")[0],
-            "port": hub.settings.port}
+            "port": hub.settings.port, **hub.secure_urls()}
     if hub.auth and request.remote in LOCALHOST:  # only the TV itself may show the PIN
         data["pin"] = hub.auth.pin
     return web.json_response(data)
@@ -456,6 +490,8 @@ async def reset_pin(request: web.Request):
     hub._qr = None
     # Already-connected phones must pair again too.
     phones = [ws for ws, role in hub.clients.items() if role == "remote"] + list(hub.mirror.viewers)
+    if hub.cast.sender is not None:
+        phones.append(hub.cast.sender)
     await asyncio.gather(*(ws.close(code=WSCloseCode.POLICY_VIOLATION) for ws in phones), return_exceptions=True)
     await hub.send_to("tv", {"t": "repaired"})  # the launcher reloads its QR code and PIN
     return ok()
@@ -557,6 +593,29 @@ async def mirror_handler(request: web.Request):
     return ws
 
 
+@routes.get("/ws/cast")
+async def cast_handler(request: web.Request):
+    """Screen sharing signalling: a laptop (sender) and the TV's receiver page."""
+    cast = request.app[HUB].cast
+    is_tv = request.query.get("role") == "tv" and request.remote in LOCALHOST
+    ws = web.WebSocketResponse(heartbeat=20, max_msg_size=256 * 1024)  # SDP offers are a few KB
+    await ws.prepare(request)
+    await (cast.tv_joined(ws) if is_tv else cast.sender_joined(ws))
+    try:
+        async for msg in ws:
+            if msg.type != WSMsgType.TEXT:
+                continue
+            try:
+                data = json.loads(msg.data)
+                if isinstance(data, dict):
+                    await cast.relay(ws, data)
+            except ValueError:
+                log.debug("ignoring bad cast message")
+    finally:
+        await (cast.tv_left(ws) if is_tv else cast.sender_left(ws))
+    return ws
+
+
 def _clamp(v) -> float:
     return max(-MAX_DELTA, min(MAX_DELTA, float(v)))
 
@@ -595,8 +654,9 @@ def _ssl_context() -> ssl.SSLContext:
 
 async def _shutdown(app: web.Application) -> None:
     # Open remotes would otherwise hold a graceful shutdown open.
-    await asyncio.gather(*(ws.close(code=WSCloseCode.GOING_AWAY) for ws in list(app[HUB].clients)),
-                         return_exceptions=True)
+    hub = app[HUB]
+    sockets = [*hub.clients, *hub.mirror.viewers, *(ws for ws in (hub.cast.sender, hub.cast.tv) if ws is not None)]
+    await asyncio.gather(*(ws.close(code=WSCloseCode.GOING_AWAY) for ws in sockets), return_exceptions=True)
 
 
 async def _cleanup(app: web.Application) -> None:
@@ -613,6 +673,7 @@ def create_app(settings: Settings | None = None) -> web.Application:
     app.add_routes(routes)
     app.router.add_static("/tv/", WEB_DIR / "tv")
     app.router.add_static("/remote/", WEB_DIR / "remote")
+    app.router.add_static("/cast/", WEB_DIR / "cast")
     app.on_response_prepare.append(_no_stale_assets)
     app.on_startup.append(_startup)
     app.on_shutdown.append(_shutdown)
@@ -623,9 +684,32 @@ def create_app(settings: Settings | None = None) -> web.Application:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     app = create_app()
-    s = app[HUB].settings
-    log.info("serving on http://%s:%d (remote: http://%s:%d/remote)", s.host, s.port, lan_ip(), s.port)
-    web.run_app(app, host=s.host, port=s.port, access_log=None, print=None, shutdown_timeout=3)
+    hub = app[HUB]
+    if hub.settings.https_port:
+        hub.tls = ensure_certificate(hub.settings.data_dir, lan_ip())
+    asyncio.run(_serve(app))
+
+
+async def _serve(app: web.Application) -> None:
+    """Plain HTTP for the TV and phones, plus HTTPS (when there's a certificate) for
+    laptops that share their screen."""
+    hub = app[HUB]
+    s = hub.settings
+    runner = web.AppRunner(app, access_log=None, shutdown_timeout=3)
+    await runner.setup()
+    await web.TCPSite(runner, s.host, s.port).start()
+    log.info("serving on http://%s:%d (remote: %s)", s.host, s.port, hub.remote_url())
+    if hub.tls:
+        await web.TCPSite(runner, s.host, s.https_port, ssl_context=hub.tls.context()).start()
+        log.info("secure remote (screen sharing): %s", hub.secure_urls()["secure_url"])
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    try:
+        await stop.wait()
+    finally:
+        await runner.cleanup()
 
 
 if __name__ == "__main__":

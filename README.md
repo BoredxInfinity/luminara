@@ -167,6 +167,12 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - Right at the end of a row pages the row, like a TV app. Up/down go row by row.
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.
   - While a video plays full screen, the arrows go to the player (seek, volume) as before. Touching the touchpad hands control to the cursor.
+- **Share a laptop's screen on the TV** (the cast button at the top of the remote, on computers):
+  - Pick the whole screen, a window or a tab. The picture goes straight from the laptop's browser to the TV over your Wi-Fi (WebRTC); while sharing, the TV shows it full screen, then goes back to what it was showing.
+  - "Text & slides" sends up to 1080p at 15 fps; "Video" sends 720p at 30 fps. Both prefer H.264, which the Pi decodes cheaply. You can switch while sharing.
+  - Share a tab with "Also share tab audio" to hear it on the TV.
+  - Stop from the remote, from the browser's own "Stop sharing" bar, or by pressing Home/Back on any remote.
+  - Phones and tablets can't share their screen from a web page, so the button only appears on computers.
 - **No scrollbars** anywhere on the TV (scrolling still works).
 - **Leaving an app frees its memory:** Chromium's back-forward cache and spare renderer are off, so an app's page and process go away when you leave it, and going Home also tells Chromium to drop leftover caches. If Chromium ever discards the TV tab, the box reloads the home screen into it.
 - **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects or an update arrives, and the touchpad cursor.
@@ -219,6 +225,15 @@ Logos and icons aren't stored in this repo. The Pi downloads them from Wikimedia
 | Keyboard tab | Types into whatever is focused on the TV |
 | Laptop keyboard | Arrows, Enter, Esc, Backspace (Back) and Space (play/pause) are forwarded |
 
+## Secure remote (HTTPS) for screen sharing
+
+Browsers only let a page capture the screen over HTTPS, so the box also serves the remote at `https://<hostname>.local:8443/remote`.
+
+- On first start the box uses [mkcert](https://github.com/FiloSottile/mkcert) (installed by `install.sh`) to create its own certificate authority, issues a certificate for its name, IP and localhost, and then **deletes the authority's private key**. Trusting it on a laptop can therefore only ever vouch for this box, never for other websites.
+- Each laptop trusts it once. Open the remote's cast panel over plain HTTP and it walks you through it: download the certificate from `http://<box>:8080/ca.crt`, mark it trusted (Keychain Access on a Mac, "Trusted Root Certification Authorities" on Windows; Firefox has its own list), then open the secure remote and pair with the PIN.
+- The certificate lasts about two years; the box makes a new one (and you trust it again) only when it's nearly expired or the hostname changes. It's kept if the IP changes, since the `.local` name still matches.
+- Files live in `~/.local/state/tvbox/tls/`. `TVBOX_HTTPS_PORT=0` turns HTTPS off.
+
 ## Adding a service
 
 Add an entry to `services.json`, then push and run `./update.sh`:
@@ -270,7 +285,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 
 ## Reference
 
-Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`), `TVBOX_DATA_DIR` (`~/.local/state/tvbox`), `TVBOX_SERVICES`, `TVBOX_PIN` (`0` turns it off), `TVBOX_BOOT_VOLUME` (the default for the Settings value).
+Environment variables: `TVBOX_PORT` (8080), `TVBOX_HTTPS_PORT` (8443), `TVBOX_CDP` (`http://127.0.0.1:9222`), `TVBOX_DATA_DIR` (`~/.local/state/tvbox`), `TVBOX_SERVICES`, `TVBOX_PIN` (`0` turns it off), `TVBOX_BOOT_VOLUME` (the default for the Settings value).
 
 | Path | Contents |
 |---|---|
@@ -288,6 +303,8 @@ Environment variables: `TVBOX_PORT` (8080), `TVBOX_CDP` (`http://127.0.0.1:9222`
 | `web/inject/dpad.js` | injected too: D-pad navigation for sites with `dpad` in `services.json` |
 | `web/remote/settings.js` | the Settings panel |
 | `web/remote/mirror.js`, `server/mirror.py` | mirror mode: the TV picture on the phone, touches back to the TV |
+| `web/remote/cast.js`, `web/cast/`, `server/cast.py` | screen sharing: laptop → TV over WebRTC, and the TV's receiver page |
+| `server/tls.py` | the box's HTTPS certificate (mkcert) |
 | `deploy/` | systemd units (incl. `tvbox-update.service`), cage and kiosk scripts, Chromium policy, cursor theme, audio rule |
 | `install.sh` | one-time Pi setup |
 | `update.sh` | pull and apply on the Pi |

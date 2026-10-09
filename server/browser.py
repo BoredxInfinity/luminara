@@ -137,6 +137,7 @@ class Browser:
         self._runner: asyncio.Task | None = None
         self.screencasting = False
         self._pixel_ratio = 1.0
+        self._before_cast: str | None = None
         self.on_frame: Callable[[dict], None] | None = None  # set by server/mirror.py
 
     # ---- lifecycle -------------------------------------------------------
@@ -310,6 +311,8 @@ class Browser:
         self._pixel_ratio = (device.get("clientWidth") or 1) / (css.get("clientWidth") or device.get("clientWidth") or 1)
 
     def _describe(self, url: str, title: str) -> dict:
+        if url.startswith(self.settings.cast_url):
+            return {"view": "cast", "service_id": None, "url": url, "title": "Screen sharing"}
         if url.startswith(self.settings.launcher_url):
             return {"view": "launcher", "service_id": None, "url": url, "title": "Home"}
         svc = service_for_url(self.services, url)
@@ -391,6 +394,22 @@ class Browser:
         and Memory.forciblyPurgeJavaScriptMemory kills the page's scripts outright."""
         await asyncio.sleep(RELEASE_AFTER)  # let the home screen finish loading first
         await self.send("Memory.simulatePressureNotification", {"level": "moderate"}, timeout=5)
+
+    # ---- screen sharing (server/cast.py) ---------------------------------------
+
+    async def open_cast(self) -> None:
+        """Show the receiver page, remembering what was on so it comes back afterwards."""
+        if self.state["view"] != "cast":
+            self._before_cast = self.state.get("url") or self.settings.launcher_url
+        await self._apply_user_agent(None)
+        await self.send("Page.navigate", {"url": self.settings.cast_url})
+
+    async def end_cast(self) -> None:
+        if self.state["view"] != "cast":
+            return  # someone already switched to something else
+        back, self._before_cast = self._before_cast or self.settings.launcher_url, None
+        await self._apply_user_agent(service_for_url(self.services, back))
+        await self.send("Page.navigate", {"url": back})
 
     async def back(self) -> None:
         if self.state["view"] == "launcher":

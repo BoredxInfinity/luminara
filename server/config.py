@@ -25,10 +25,15 @@ class Settings:
     services_file: Path = ROOT / "services.json"
     pin_enabled: bool = True
     boot_volume: int = 100  # percent set once per boot; 0 leaves volume alone
+    https_port: int = 8443  # the secure remote (screen sharing); 0 turns it off
 
     @property
     def launcher_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/tv"
+
+    @property
+    def cast_url(self) -> str:  # the TV side of screen sharing
+        return f"http://127.0.0.1:{self.port}/cast"
 
 
 def load_settings(env: dict[str, str] | None = None) -> Settings:
@@ -42,6 +47,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         services_file=Path(env.get("TVBOX_SERVICES", s.services_file)).expanduser(),
         pin_enabled=env.get("TVBOX_PIN", "1") not in ("0", "false", "no"),
         boot_volume=max(0, min(100, int(env.get("TVBOX_BOOT_VOLUME", s.boot_volume)))),
+        https_port=int(env.get("TVBOX_HTTPS_PORT", s.https_port)),
     )
 
 

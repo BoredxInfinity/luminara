@@ -218,3 +218,97 @@ def test_going_home_from_an_app_frees_memory_safely(tmp_path, monkeypatch):
         assert not any(m.startswith("Memory.") for m, _ in sent)
 
     asyncio.run(run())
+
+
+class _Socket:
+    """Stands in for an aiohttp WebSocketResponse."""
+
+    def __init__(self):
+        self.sent, self.closed = [], False
+
+    async def send_str(self, text):
+        import json
+        self.sent.append(json.loads(text))
+
+    async def close(self):
+        self.closed = True
+
+
+class _CastBrowser:
+    def __init__(self):
+        self.state = {"view": "service"}
+        self.calls = []
+
+    async def open_cast(self):
+        self.calls.append("open")
+        self.state["view"] = "cast"
+
+    async def end_cast(self):
+        self.calls.append("end")
+        self.state["view"] = "service"
+
+
+def test_cast_switches_the_tv_relays_and_switches_back():
+    import asyncio
+
+    from server.cast import Cast
+
+    async def run():
+        browser = _CastBrowser()
+        cast = Cast(browser)
+        laptop, tv = _Socket(), _Socket()
+        await cast.sender_joined(laptop)            # TV switches to the receiver page
+        assert browser.calls == ["open"]
+        await cast.tv_joined(tv)                    # receiver up: the laptop may offer
+        assert laptop.sent == [{"t": "ready"}]
+        await cast.relay(laptop, {"t": "offer", "sdp": {"type": "offer"}})
+        await cast.relay(tv, {"t": "answer", "sdp": {"type": "answer"}})
+        await cast.relay(laptop, {"t": "nonsense"})  # not relayed
+        assert tv.sent == [{"t": "offer", "sdp": {"type": "offer"}}]
+        assert laptop.sent[-1]["t"] == "answer"
+        await cast.relay(laptop, {"t": "stop"})     # TV goes back to what it showed
+        assert browser.calls == ["open", "end"] and not cast.active
+        assert tv.sent[-1] == {"t": "stop"}
+
+    asyncio.run(run())
+
+
+def test_a_second_laptop_takes_over_and_home_on_the_tv_ends_sharing(monkeypatch):
+    import asyncio
+
+    import server.cast as cast_mod
+    from server.cast import Cast
+
+    monkeypatch.setattr(cast_mod, "TV_GRACE", 0)
+
+    async def run():
+        browser = _CastBrowser()
+        cast = Cast(browser)
+        first, second, tv = _Socket(), _Socket(), _Socket()
+        await cast.sender_joined(first)
+        await cast.tv_joined(tv)
+        await cast.sender_joined(second)
+        assert first.closed and first.sent[-1] == {"t": "ended", "reason": "replaced"}
+        assert second.sent == [{"t": "ready"}]      # receiver already up
+        browser.state["view"] = "launcher"          # someone pressed Home
+        await cast.tv_left(tv)
+        assert second.sent[-1] == {"t": "ended", "reason": "tv"} and not cast.active
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(not __import__("shutil").which("mkcert"), reason="mkcert isn't installed")
+def test_certificate_is_made_once_and_the_authority_key_is_deleted(tmp_path):
+    import ssl
+
+    from server.tls import ensure_certificate
+
+    cert = ensure_certificate(tmp_path, "192.168.1.50")
+    assert cert and cert.cert.exists() and cert.ca.exists()
+    assert not (tmp_path / "tls" / "ca" / "rootCA-key.pem").exists()  # can't sign anything else
+    assert "192.168.1.50" in cert.names and "localhost" in cert.names
+    ctx = ssl.create_default_context(cafile=str(cert.ca))  # the CA devices download is valid
+    assert ctx.cert_store_stats()["x509_ca"] == 1
+    cert.context()                                        # loads as a server certificate
+    again = ensure_certificate(tmp_path, "192.168.1.99")  # IP changed: keep the trusted one
+    assert again.cert.read_bytes() == cert.cert.read_bytes()

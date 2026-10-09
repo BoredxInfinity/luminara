@@ -37,6 +37,8 @@
   "EnableMediaRouter": false,
   "BackgroundModeEnabled": false,
 
+  "WebRtcLocalIpsAllowedUrls": ["http://127.0.0.1:8080"],
+
   "AutoplayAllowed": true,
   "FullscreenAllowed": true,
   "DownloadRestrictions": 3,

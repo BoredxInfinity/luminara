@@ -36,6 +36,7 @@ apt-get install -y --no-install-recommends \
   pipewire pipewire-pulse wireplumber \
   libwidevinecdm0 \
   avahi-daemon \
+  mkcert \
   fonts-noto-core fonts-noto-color-emoji
 # The Chromium package is "chromium" on current releases, "chromium-browser" on older ones.
 apt-get install -y chromium || apt-get install -y chromium-browser

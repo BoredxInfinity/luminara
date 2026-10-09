@@ -158,7 +158,7 @@ function paintState() {
   const online = ws && ws.readyState === WebSocket.OPEN;
   $("conn").className = `conn ${online && state.cdp ? "on" : online ? "half" : ""}`;
   const svc = services.find((s) => s.id === state.service_id);
-  const views = { launcher: "Home screen", service: "Now on TV", web: "Web page", offline: "TV browser starting" };
+  const views = { launcher: "Home screen", service: "Now on TV", web: "Web page", cast: "Now on TV", offline: "TV browser starting" };
   $("now-view").querySelector("span").textContent = online ? (views[state.view] || "Connecting…") : "Reconnecting…";
   $("now-title").textContent =
     state.view === "launcher" ? "Luminara" : svc ? (state.title && state.title !== svc.name ? `${svc.name} · ${state.title}` : svc.name) : (state.title || "Luminara");

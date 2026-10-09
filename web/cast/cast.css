@@ -1,0 +1,22 @@
+/* The TV side of screen sharing: the laptop's picture, full screen. */
+:root { color-scheme: dark; --font: "Noto Sans Display", "Noto Sans", system-ui, sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #000; overflow: hidden; cursor: none; }
+video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.note {
+  position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 2vh;
+  font: 400 1.4vw/1.3 var(--font); color: #9aa3b8; text-align: center;
+  background: radial-gradient(60% 60% at 50% 45%, #15182a, #05060a 80%);
+  transition: opacity .6s;
+}
+.note.gone { opacity: 0; pointer-events: none; }
+.note h1 { color: #f4f6fb; font-size: 2.6vw; font-weight: 700; }
+.mark {
+  width: 6vw; height: 6vw; border-radius: 1.6vw; position: relative; margin-bottom: 1vh;
+  background: conic-gradient(from 210deg, #7c5cff, #2bd4ff, #ff4fb3, #7c5cff);
+  box-shadow: 0 1vw 4vw rgba(124, 92, 255, .45);
+}
+.mark::after {
+  content: ""; position: absolute; left: 39%; top: 29%;
+  border-left: 2vw solid #fff; border-top: 1.2vw solid transparent; border-bottom: 1.2vw solid transparent;
+}
