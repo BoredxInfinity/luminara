@@ -85,7 +85,7 @@
              transition: opacity 3.2s cubic-bezier(.4,0,.2,1), visibility 0s linear 3.2s; }
     .saver.on { opacity: 1; visibility: visible; transition: opacity 3.2s cubic-bezier(.4,0,.2,1), visibility 0s; }
     .saver.leaving { transition: opacity .7s ease-out, visibility 0s linear .7s; }
-    .saver canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .saver canvas { position: absolute; inset: 0; width: 100%; height: 100%; transition: opacity .7s ease; }
     .clock { position: absolute; left: 50%; top: 50%; translate: -50% -50%; text-align: center; color: rgba(255,255,255,.92);
              text-shadow: 0 0 40px rgba(0,0,0,.9), 0 0 12px rgba(0,0,0,.8); }
     .clock b { display: block; font-size: 12vh; font-weight: 200; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -95,9 +95,29 @@
     .music .clock b { font-size: 6vh; }
 
     /* Turntable (music playing) */
-    .tt { position: absolute; inset: 0; display: none; align-items: center; gap: 7vw; padding: 0 8vw; }
-    .music .tt { display: flex; }
-    .music canvas { display: none; }
+    /* Clock <-> turntable. The turntable is always laid out (so the particles know where
+       the record sits) but hidden; .music fades it in, .closing sends it away. */
+    .tt { position: absolute; inset: 0; display: flex; align-items: center; gap: 7vw; padding: 0 8vw;
+          opacity: 0; visibility: hidden; transition: opacity .8s ease, visibility 0s linear .8s; }
+    .music .tt { opacity: 1; visibility: visible; transition: opacity .8s ease; }
+    .music canvas { opacity: 0; }
+    .saver:not(.music) .record { animation-play-state: paused; }
+    .music .deck { animation: deck-in .9s cubic-bezier(.2,.8,.3,1) both; }
+    @keyframes deck-in { from { opacity: 0; transform: scale(.9); } }
+    .music .meta > * { animation: rise .7s cubic-bezier(.2,.8,.3,1) both; }
+    .music .meta > :nth-child(1) { animation-delay: .45s; }
+    .music .meta > :nth-child(2) { animation-delay: .55s; }
+    .music .meta > :nth-child(3) { animation-delay: .65s; }
+    .music .meta > :nth-child(4) { animation-delay: .75s; }
+    @keyframes rise { from { opacity: 0; transform: translateY(3vh); } }
+    .music .clock { animation: rise .7s .5s cubic-bezier(.2,.8,.3,1) both; }
+    .closing .deck { animation: deck-out .6s cubic-bezier(.5,0,.75,0) both; }
+    @keyframes deck-out { to { opacity: 0; transform: scale(.88); } }
+    .closing .meta > * { animation: sink .45s cubic-bezier(.5,0,.75,0) both; }
+    .closing .meta > :nth-child(2) { animation-delay: .05s; }
+    .closing .meta > :nth-child(3) { animation-delay: .1s; }
+    .closing .meta > :nth-child(4) { animation-delay: .15s; }
+    @keyframes sink { to { opacity: 0; transform: translateY(-2vh); } }
     /* A blurred album-art backdrop. Blurring a small copy and scaling it up looks the same
        as blurring a full-screen one and costs the Pi's GPU a fraction as much. */
     .tt-bg { position: absolute; left: 50%; top: 50%; width: 24vw; height: 24vh; background-size: cover;
@@ -261,9 +281,13 @@
   // (e.g. the screensaver appearing); only real movement counts as input.
   let mouseX = -1, mouseY = -1;
   addEventListener("mousemove", (e) => {
+    const first = mouseX < 0;
     if (Math.abs(e.clientX - mouseX) + Math.abs(e.clientY - mouseY) < 3) return;
     mouseX = e.clientX;
     mouseY = e.clientY;
+    // The first report after a page loads is just where the pointer rests, sent when the
+    // layout changes under it (e.g. the turntable appearing), not someone moving it.
+    if (first) return;
     onInput(e);
     const { dot } = ensure();
     dot.style.transform = `translate(${e.clientX}px,${e.clientY}px)`;
@@ -338,7 +362,8 @@
     const u = ensure();
     saverOn = true;
     trackShown = "";                 // the first song goes straight on, no swap
-    u.saver.classList.remove("music");
+    mode = "clock";
+    u.saver.classList.remove("music", "closing", "swapping");
     signal({ saver: true });
     pauseTrailers();
     startedAt = performance.now();
@@ -371,20 +396,72 @@
     u.clockTime.textContent = `${t12.time} ${t12.suffix}`;
     u.clockDate.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
     const music = nowPlaying();
-    const wasMusic = u.saver.classList.contains("music");
-    u.saver.classList.toggle("music", !!music);
+    // Mid-transition: leave it alone; the next refresh (every 2 s) catches up.
+    if (mode === "to-music" || mode === "to-clock") return;
     if (!music) {
-      if (saverOn && !rafId) rafId = requestAnimationFrame(draw);  // music stopped: back to the dots
+      if (mode === "music") toClock();
       return;
     }
+    if (mode === "clock") return toMusic(music);
     u.saver.classList.toggle("paused", !music.playing);
     u.source.textContent = music.source;
-    const changed = trackKey(music) !== trackShown;
-    // A new song while the record is already on the turntable: swap records. Otherwise
-    // (first song, screensaver just starting) put it straight on.
+    // A new song while the record is on the turntable: swap records.
     if (swapping) pendingTrack = music;
-    else if (changed && trackShown && saverOn && wasMusic) swapRecord(music);
-    else if (changed) showTrack(music);
+    else if (trackKey(music) !== trackShown) swapRecord(music);
+  }
+
+
+  // ---- clock <-> turntable ---------------------------------------------------------
+  let mode = "clock";  // "clock" | "to-music" | "music" | "to-clock"
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function recordCentre() {
+    const r = ui.disc.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: r.width / 2 };
+  }
+
+  // Music started: the clock's particles stream into where the record will be, the
+  // turntable fades in around them as they fade out, the record drops onto the platter,
+  // the titles rise in, and the tonearm swings on.
+  async function toMusic(m) {
+    const u = ui;
+    mode = "to-music";
+    showTrack(m);
+    u.source.textContent = m.source;
+    u.saver.classList.toggle("paused", !m.playing);
+    const fromClock = dots.length > 0;  // the screensaver just started: nothing to gather
+    if (fromClock) {
+      gatherInto(recordCentre());
+      await wait(800);
+    }
+    u.saver.classList.add("swapping");        // tonearm waits off the record
+    u.saver.classList.add("music");
+    u.disc.animate([{ transform: "translateY(-6vh) scale(1.12)", opacity: 0 },
+                    { transform: "translateY(-6vh) scale(1.12)", opacity: 1, offset: 0.35 },
+                    { transform: "none", opacity: 1 }],
+                   { duration: 900, easing: "cubic-bezier(.5,0,.55,1.3)" });
+    await wait(1100);
+    u.saver.classList.remove("swapping");     // tonearm swings onto the record
+    await wait(600);                          // particles are faded out by now
+    mode = "music";
+  }
+
+  // Music gone: the tonearm lifts, the record winds down, the titles and turntable sink
+  // away, and the particles burst out of the record into the clock.
+  async function toClock() {
+    const u = ui;
+    mode = "to-clock";
+    u.saver.classList.add("swapping");
+    await wait(550);
+    u.saver.classList.add("closing");          // titles sink, the deck shrinks away
+    await wait(600);
+    const c = recordCentre();
+    u.saver.classList.remove("music");         // the (now empty) turntable fades; the clock fades in
+    burstFrom(c);
+    if (saverOn && !rafId) rafId = requestAnimationFrame(draw);
+    await wait(900);                           // keep it gone and the arm up until faded
+    u.saver.classList.remove("closing", "swapping");
+    mode = "clock";
   }
 
   let trackShown = "", swapping = false, pendingTrack = null;
@@ -556,13 +633,40 @@
   }
   const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
 
+  // Into the turntable: every particle streams into a disc where the record will sit.
+  function gatherInto(c) {
+    const now = performance.now();
+    for (const d of dots) {
+      const a = Math.random() * 6.2832, rr = c.r * 0.92 * Math.sqrt(Math.random());  // even over the disc
+      Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: c.x + Math.cos(a) * rr, ty: c.y + Math.sin(a) * rr,
+                         ts: d.s * 0.8, key: "", t0: now + Math.random() * 250, dur: 900 });
+    }
+    moving = true;
+  }
+
+  // Out of the turntable: the particles start packed at the record's centre and the next
+  // frame sends each one gliding to its spot in the clock.
+  let burstOrigin = null;
+  function burstFrom(c) {
+    burstOrigin = c;  // used if there are no particles yet (the screensaver began with music)
+    for (const d of dots) {
+      const a = Math.random() * 6.2832, rr = c.r * 0.35 * Math.random();
+      Object.assign(d, { x: c.x + Math.cos(a) * rr, y: c.y + Math.sin(a) * rr, key: "", t0: undefined });
+    }
+    shown = "";
+  }
+
   function retarget(now, w, h, scatter) {
     const { t, date, key } = stamp(new Date());
     const { pts, size } = layout(t, date, w, h);
+    const fromBurst = !!burstOrigin;
+    burstOrigin = null;
     shown = key; shownW = w; shownH = h;
     if (scatter || dots.length !== dotCount()) {  // fresh start: drift in from all over the screen
+      const o = burstOrigin;
       dots = Array.from({ length: dotCount() }, () => {
-        const x = Math.random() * w, y = Math.random() * h;
+        const a = Math.random() * 6.2832, rr = o ? o.r * 0.35 * Math.random() : 0;
+        const x = o ? o.x + Math.cos(a) * rr : Math.random() * w, y = o ? o.y + Math.sin(a) * rr : Math.random() * h;
         return { x, y, s: size / SUB, key: "", phase: Math.random() * 6.2832 };
       });
     }
@@ -602,7 +706,7 @@
       const key = keyOf(p);
       if (key === d.key && !scatter) continue;
       Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: p.x, ty: p.y, ts: p.s, key,
-                         t0: now + Math.random() * (scatter ? 900 : 350), dur: scatter ? 2600 : 1500 });
+                         t0: now + Math.random() * (scatter && !fromBurst ? 900 : 350), dur: scatter && !fromBurst ? 2600 : 1500 });
     }
   }
 
@@ -615,7 +719,7 @@
 
   function draw(t) {
     // Stop the loop when hidden or while the turntable (pure CSS) is showing.
-    if ((!saverOn && !ui.saver.classList.contains("leaving")) || ui.saver.classList.contains("music")) {
+    if ((!saverOn && !ui.saver.classList.contains("leaving")) || mode === "music") {
       rafId = 0;
       return;
     }
