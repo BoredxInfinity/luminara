@@ -18,6 +18,10 @@ StandardInput=tty-fail
 UtmpIdentifier=tty1
 UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
+# CPU speed: check every 10 ms instead of every 100 whether to speed up, so the first
+# frames of an animation that starts from idle aren't drawn at idle speed. It still idles
+# at its lowest clock. ("+": as root; "-": fine if this kernel has no such setting.)
+ExecStartPre=-+/bin/sh -c 'echo 10000 > /sys/devices/system/cpu/cpufreq/ondemand/sampling_rate'
 ExecStart=@APP_DIR@/deploy/kiosk-session.sh
 # Chromium's errors go to the journal (not the TV's console), so a crash leaves a trace;
 # rate-limited so a misbehaving page can't flood it.
