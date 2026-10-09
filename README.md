@@ -159,7 +159,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
 - **Screensaver** (after 5 minutes by default; change it in Settings):
   - It runs on the home screen and on streaming-site menus, but never over a playing video.
   - The time and date are drawn in colour-shifting particles. When the minute changes they glide into the new digits; none appear or vanish.
-  - It's kept light: 20 frames a second while the particles only shimmer (30 while they move), and muted trailers playing behind it are paused until you're back.
+  - It's drawn by the GPU (WebGL): 60 frames a second while the particles move and 30 while they only shimmer (a fraction of a pixel per frame, so it looks the same), at under half of one CPU core. Muted trailers playing behind it are paused until you're back, and the GPU memory it used is handed back when it closes.
   - The **Screensaver** button on the remote starts it right away (the turntable if music is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
   - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), or in the page on the TV, it shows a turntable with the album art spinning on the record, plus the song, artist and album, on black, with the record player glowing in the album's average colour. See [Spotify on the screensaver](#spotify-on-the-screensaver).
@@ -175,6 +175,11 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - Stop from the remote, from the browser's own "Stop sharing" bar, or by pressing Home/Back on any remote.
   - Phones and tablets can't share their screen from a web page, so the button only appears on computers.
 - **No scrollbars** anywhere on the TV (scrolling still works).
+- **Smooth on a Pi:** animations stick to what the GPU does cheaply (moving and fading layers). The home screen's background glow is drawn small and stretched rather than crossfading full-screen layers, a D-pad press does only a few milliseconds of work, and Chromium runs without Raspberry Pi OS's desktop flags (one of them made every page keep an accessibility tree up to date).
+- **Runs around the clock:**
+  - Every 20 seconds the controller checks that Chromium and the TV page answer. A page frozen for a minute is restarted on the home screen; if Chromium itself stops answering for two minutes it's restarted.
+  - Once a night (3-5 am), if the box is idle on the home screen under the screensaver and Chromium has run for 20+ hours, Chromium is restarted fresh and the screensaver goes straight back up.
+  - When memory runs low, Chromium is asked to free what it can. Under-voltage or overheating is logged as it happens, and a line of health figures (memory, swap, load, temperature) is logged every half hour.
 - **Leaving an app frees its memory:** Chromium's back-forward cache and spare renderer are off, so an app's page and process go away when you leave it, and going Home also tells Chromium to drop leftover caches. If Chromium ever discards the TV tab, the box reloads the home screen into it.
 - **On top of any streaming site:** a volume bar when you change the volume, a toast when a phone connects or an update arrives, and the touchpad cursor.
 - **Phone remote:**
@@ -278,7 +283,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 
 ## Housekeeping (on the Pi)
 
-- **Logs:** `journalctl -u tvbox-server -u tvbox-kiosk -f` (kept across reboots, up to 50 MB; add `-b -1` for the previous boot)
+- **Logs:** `journalctl -u tvbox-server -u tvbox-kiosk -f`. They're kept across reboots in a fixed 50 MB (5 MB files; the oldest is dropped as a new one starts). Add `-b -1` for the previous boot, or `journalctl -u tvbox-server | grep health` for the half-hourly health lines. Chromium's own errors are in the `tvbox-kiosk` log.
 - **Update logs:** `journalctl -u tvbox-update`
 - **Reset the PIN and forget all remotes:** use **Settings → Phones → Forget all phones**.
 - **Turn off the PIN:** add `Environment=TVBOX_PIN=0` to `deploy/tvbox-server.service`, then push and update.

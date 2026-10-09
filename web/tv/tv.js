@@ -182,12 +182,16 @@ function paint(quiet = false) {
   }
 }
 
+let selectedHere = 0;  // when a press here last moved the focus
 function select(id, announce = true) {
   if (!services.some((s) => s.id === id) || (id === selected && !announce)) return;
   const changed = id !== selected;
   selected = id;
   paint(!changed);
-  if (announce && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "select", id }));
+  if (announce) {
+    selectedHere = performance.now();
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "select", id }));
+  }
 }
 
 function move(step) {
@@ -333,7 +337,9 @@ function connect() {
     state = msg;
     paintRemotes(msg.remotes || 0, before.remotes || 0);
     if (JSON.stringify(msg.settings?.hidden_apps) !== JSON.stringify(before.settings?.hidden_apps)) render();
-    if (msg.selected !== selected) select(msg.selected, false);
+    // Pressing quickly, the server's echo of an earlier press can arrive after a later one:
+    // only follow a selection from elsewhere (a phone) when nothing was pressed here just now.
+    if (msg.selected !== selected && performance.now() - selectedHere > 1000) select(msg.selected, false);
     else paint(true);
     paintUpdate();
   };
