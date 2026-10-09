@@ -26,7 +26,7 @@ from .logos import Logos
 from .mirror import Mirror
 from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
 from .spotify import POLL_SECONDS, Spotify, SpotifyError
-from .system import System, system_info
+from .system import System, health, kiosk_browser, restart_kiosk_browser, system_info, throttle_problems
 from .tls import Certificate, ensure_certificate
 from .updater import Updater
 
@@ -37,6 +37,13 @@ VALID_KEYS = set(KEYS) | set(MEDIA_ACTIONS) | {"back"}
 MAX_TEXT = 500
 MAX_DELTA = 400.0
 SPOTIFY_QUIET = 60  # seconds without music before the screensaver goes back to the clock
+# Around-the-clock upkeep (Hub.maintain)
+CHECK_EVERY = 15              # seconds between checks
+DISPLAY_STUCK_AFTER = 120     # seconds Chromium may stay unreachable before it's restarted
+HEALTH_EVERY = 30 * 60        # seconds between health lines in the log
+LOW_MEMORY_MB = 150           # below this, Chromium is asked to free what it can
+REFRESH_HOURS = (3, 5)        # local hours for the nightly Chromium refresh...
+REFRESH_AFTER = 20 * 3600     # ...once it has been running this long
 
 
 class Hub:
@@ -69,6 +76,7 @@ class Hub:
         self._announced_update = ""
         self._remote_left_at = 0.0  # when the last phone disconnected
         self._qr: tuple[str, str] | None = None  # (url, svg)
+        self._refreshed_day = -1  # day of the year of the last nightly Chromium refresh
 
     # ---- state ----------------------------------------------------------
 
@@ -191,6 +199,77 @@ class Hub:
                     log.warning("Spotify check failed (will keep trying): %s: %s", type(exc).__name__, exc)
                     failing = True
             await asyncio.sleep(POLL_SECONDS)  # a rate-limited check is just tried again here
+
+    # ---- upkeep ---------------------------------------------------------------------
+
+    async def maintain(self) -> None:
+        """Keeps the box healthy around the clock:
+        - Chromium unreachable for two minutes while it runs means it's stuck: restart it
+          (tvbox-kiosk.service starts a fresh one).
+        - Low on memory: ask Chromium to free what it can.
+        - Under-voltage or overheating: say so in the log, as it happens.
+        - Every half hour, a line of health figures in the log, to look back on.
+        - Once a night (3-5 am), if nobody's using it (home screen, screensaver up) and
+          Chromium has run for 20+ hours, restart Chromium: a long-running browser slowly
+          holds on to more memory. The screensaver goes straight back up."""
+        down_since: float | None = None
+        next_health = next_vitals = 0.0
+        throttled_now, low_memory = 0, False
+        while True:
+            await asyncio.sleep(CHECK_EVERY)
+            try:
+                now = time.monotonic()
+                if self.browser.state.get("cdp"):
+                    down_since = None
+                elif down_since is None:
+                    down_since = now
+                elif now - down_since >= DISPLAY_STUCK_AFTER:
+                    down_since = None
+                    await restart_kiosk_browser("no control connection for two minutes")
+                if now < next_vitals:
+                    continue
+                next_vitals = now + 60
+                h = await health()
+                bits = (h["throttled"] or 0) & 0xF
+                if bits != throttled_now:
+                    throttled_now = bits
+                    if bits:
+                        log.warning("power/heat trouble: %s (check the power supply and cooling)",
+                                    ", ".join(throttle_problems(bits)))
+                    else:
+                        log.info("power/heat back to normal")
+                avail = h["mem_available_mb"]
+                if avail is not None and avail < LOW_MEMORY_MB and not low_memory:
+                    low_memory = True
+                    log.warning("low on memory (%d MB free); asking Chromium to free some", avail)
+                    if self.browser.state.get("cdp"):
+                        self.browser.spawn(self.browser.relieve_memory())
+                elif low_memory and avail is not None and avail >= 2 * LOW_MEMORY_MB:
+                    low_memory = False
+                if now >= next_health:
+                    next_health = now + HEALTH_EVERY
+                    log.info("health: %s, showing %s", ", ".join(f"{k}={v}" for k, v in h.items() if v is not None),
+                             self.browser.state.get("view"))
+                await self.nightly_refresh()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - upkeep must never stop
+                log.exception("upkeep check failed")
+
+    async def nightly_refresh(self) -> None:
+        lt = time.localtime()
+        if not (REFRESH_HOURS[0] <= lt.tm_hour < REFRESH_HOURS[1]) or lt.tm_yday == self._refreshed_day:
+            return
+        if not (self.browser.saver_on and self.browser.state.get("view") == "launcher"
+                and not self.cast.active and not self.mirror.viewers):
+            return  # someone's using it
+        running = kiosk_browser()
+        if not running or running[1] < REFRESH_AFTER:
+            return
+        self._refreshed_day = lt.tm_yday  # once a night, even if this one doesn't work out
+        self.browser.resume_saver = True
+        if not await restart_kiosk_browser(f"nightly refresh after {running[1] / 3600:.0f} hours"):
+            self.browser.resume_saver = False
 
     async def on_install_done(self, ok: bool) -> None:
         """Only reached when the update didn't restart us: it failed, or there was nothing to do."""
@@ -763,6 +842,7 @@ async def _startup(app: web.Application) -> None:
         asyncio.create_task(hub.logos.prefetch(hub.http)),
         asyncio.create_task(hub.announce_restart()),
         asyncio.create_task(hub.updater.run_periodic(lambda: hub.prefs["auto_update_check"], hub.on_update_status)),
+        asyncio.create_task(hub.maintain()),
     ]
 
 

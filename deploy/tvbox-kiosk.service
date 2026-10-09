@@ -19,6 +19,12 @@ UtmpIdentifier=tty1
 UtmpMode=user
 Environment=XDG_SESSION_TYPE=wayland
 ExecStart=@APP_DIR@/deploy/kiosk-session.sh
+# Chromium's errors go to the journal (not the TV's console), so a crash leaves a trace;
+# rate-limited so a misbehaving page can't flood it.
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=300
 Restart=always
 RestartSec=3
 

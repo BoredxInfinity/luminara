@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
+import signal
+import time
 
 log = logging.getLogger("tvbox.system")
 
@@ -44,6 +47,91 @@ def system_info() -> dict:
     if load := _read("/proc/loadavg"):
         info["load"] = float(load.split()[0])
     return info
+
+
+def _meminfo() -> dict[str, int]:
+    """/proc/meminfo in MB."""
+    out = {}
+    for line in (_read("/proc/meminfo") or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].isdigit():
+            out[parts[0].rstrip(":")] = int(parts[1]) // 1024
+    return out
+
+
+def kiosk_browser(profile_marker: str = "tvbox-chromium") -> tuple[int, float] | None:
+    """The kiosk's Chromium browser process (not its helpers): (pid, seconds running).
+    Only ever the one using the TV box's own profile, never another Chromium."""
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+        boot = time.time() - float((_read("/proc/uptime") or "0").split()[0])
+        hz = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError):
+        return None
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                args = f.read().split(b"\0")
+            if not args or b"chrom" not in os.path.basename(args[0]):
+                continue
+            if any(a.startswith(b"--type=") for a in args) or not any(profile_marker.encode() in a for a in args):
+                continue
+            stat = (_read(f"/proc/{pid}/stat") or "").rsplit(")", 1)[1].split()
+            started = boot + int(stat[19]) / hz
+            return int(pid), time.time() - started
+        except (OSError, IndexError, ValueError):
+            continue
+    return None
+
+
+async def restart_kiosk_browser(reason: str) -> bool:
+    """End the kiosk's Chromium; tvbox-kiosk.service starts a fresh one within seconds.
+    (It runs as this same user, so no special rights are needed.)"""
+    found = kiosk_browser()
+    if not found:
+        return False
+    pid = found[0]
+    log.warning("restarting Chromium (%s)", reason)
+    try:
+        os.kill(pid, signal.SIGTERM)  # lets it save its profile and exit cleanly
+        for _ in range(20):
+            await asyncio.sleep(0.5)
+            os.kill(pid, 0)
+        os.kill(pid, signal.SIGKILL)  # hung too badly to exit by itself
+    except ProcessLookupError:
+        pass
+    return True
+
+
+async def health() -> dict:
+    """A snapshot for the log: memory, swap, load, temperature and any power trouble."""
+    mem = _meminfo()
+    info = {
+        "mem_available_mb": mem.get("MemAvailable"),
+        "swap_used_mb": (mem.get("SwapTotal", 0) - mem.get("SwapFree", 0)) if "SwapTotal" in mem else None,
+        "load": float((_read("/proc/loadavg") or "0").split()[0]),
+        "temp_c": None, "throttled": None,
+    }
+    if temp := _read("/sys/class/thermal/thermal_zone0/temp"):
+        info["temp_c"] = round(int(temp) / 1000, 1)
+    if shutil.which("vcgencmd"):
+        try:
+            out = await _run("vcgencmd", "get_throttled")  # "throttled=0x50000"
+            info["throttled"] = int(out.strip().split("=")[1], 16)
+        except (RuntimeError, IndexError, ValueError):
+            pass
+    browser = kiosk_browser()
+    if browser:
+        info["chromium_hours"] = round(browser[1] / 3600, 1)
+    return info
+
+
+# vcgencmd get_throttled bits that are true right now (the higher bits mean "since boot").
+THROTTLE_NOW = {0: "under-voltage", 1: "CPU speed capped", 2: "throttled", 3: "soft temperature limit"}
+
+
+def throttle_problems(bits: int | None) -> list[str]:
+    return [name for bit, name in THROTTLE_NOW.items() if bits and bits & (1 << bit)]
 
 
 async def _run(*args: str, timeout: float = 5) -> str:

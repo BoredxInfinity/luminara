@@ -206,6 +206,7 @@ async function openSettings() {
   paintSettings();
   loadSpotify();
   loadAbout();
+  clearInterval(aboutTimer);  // opened twice in a row: still one timer
   aboutTimer = setInterval(loadAbout, 5000);  // live memory / temperature
 }
 

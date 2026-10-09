@@ -43,6 +43,8 @@ MEDIA_ACTIONS = ("playpause", "seek_fwd", "seek_back")
 
 SIGNAL = "__tvboxSignal"  # the binding overlay.js reports through
 RELEASE_AFTER = 1.5  # seconds after going home before Chromium is told to free memory
+WATCH_EVERY = 20     # seconds between checks that Chromium and the TV page still answer
+WATCH_STRIKES = 3    # checks in a row without an answer before doing something about it
 
 # Screen mirroring (server/mirror.py): 960x540 JPEGs are sharp enough on a phone and
 # cheap enough for the Pi to encode next to a playing video.
@@ -143,6 +145,7 @@ class Browser:
         self.saver_on = False
         self.on_saver: Callable[[bool], Awaitable[None] | None] | None = None
         self._music_sent = ""
+        self.resume_saver = False  # put the screensaver straight back up after attaching
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -196,12 +199,16 @@ class Browser:
         self._ws = await self._http.ws_connect(version["webSocketDebuggerUrl"], max_msg_size=0)
         log.info("connected to %s", version.get("Browser", "browser"))
         reader = asyncio.create_task(self._read(self._ws))
+        watchdog = None
         try:
             await self.send("Target.setDiscoverTargets", {"discover": True}, page=False)
             await self._attach()
+            watchdog = asyncio.create_task(self._watchdog(self._ws))
             await reader
         finally:
             reader.cancel()
+            if watchdog:
+                watchdog.cancel()
             if self._ws and not self._ws.closed:
                 await self._ws.close()
 
@@ -291,9 +298,46 @@ class Browser:
         await self._refresh_viewport()
         if self.screencasting:  # a phone was mirroring the tab we lost
             await self.send("Page.startScreencast", SCREENCAST)
+        if self.resume_saver:  # Chromium was restarted for maintenance under the screensaver
+            self.resume_saver = False
+            self.spawn(self.send("Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.saver(true)"}))
         self._update(cdp=True, **self._describe(target["url"], target.get("title", "")))
         await self._apply_user_agent(service_for_url(self.services, target["url"]))
         log.info("attached to tab %s (%s)", self._target, target["url"])
+
+    async def _watchdog(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        """Chromium can wedge without closing its connection: a page stuck in a script, or
+        the whole browser hung. Ask both regularly. A page that stops answering is sent home
+        (a new page gets a fresh renderer), and closed if even that doesn't help; a browser
+        that stops answering is dropped, so the reconnect loop takes over (and main.py
+        restarts Chromium if it never comes back)."""
+        page_strikes = browser_strikes = 0
+        while not ws.closed:
+            await asyncio.sleep(WATCH_EVERY)
+            try:
+                await self.send("Browser.getVersion", page=False, timeout=10)
+                browser_strikes = 0
+            except (CDPError, asyncio.TimeoutError):
+                browser_strikes += 1
+                if browser_strikes >= WATCH_STRIKES:
+                    log.error("Chromium stopped answering; reconnecting")
+                    await ws.close()
+                    return
+                continue
+            if not self._session or self._reattaching:
+                continue
+            try:
+                await self.send("Runtime.evaluate", {"expression": "1"}, timeout=10)
+                page_strikes = 0
+            except (CDPError, asyncio.TimeoutError):
+                page_strikes += 1
+                if page_strikes == WATCH_STRIKES:
+                    log.error("the TV page stopped responding (%s); loading the home screen", self.state.get("url"))
+                    self.spawn(self.send("Page.navigate", {"url": self.settings.launcher_url}))
+                elif page_strikes >= 2 * WATCH_STRIKES:
+                    log.error("the TV page is still stuck; closing it for a new one")
+                    page_strikes = 0
+                    self.spawn(self.send("Target.closeTarget", {"targetId": self._target}, page=False))
 
     async def _reattach(self) -> None:
         # Losing the tab fires both targetDestroyed and detachedFromTarget; attach only once.
@@ -414,7 +458,11 @@ class Browser:
         Only "moderate": "critical" makes Chromium discard tabs, including the home screen,
         and Memory.forciblyPurgeJavaScriptMemory kills the page's scripts outright."""
         await asyncio.sleep(RELEASE_AFTER)  # let the home screen finish loading first
-        await self.send("Memory.simulatePressureNotification", {"level": "moderate"}, timeout=5)
+        await self.relieve_memory()
+
+    async def relieve_memory(self) -> None:
+        """Ask every Chromium process to drop caches and free what it can, now."""
+        await self.send("Memory.simulatePressureNotification", {"level": "moderate"}, page=False, timeout=5)
 
     async def clear_to_home(self) -> None:
         """The home screen with nothing else running: stray tabs closed, the app unloaded,

@@ -85,10 +85,12 @@ else
 fi
 
 say "Logs that survive a reboot"
-# The box is often powered from the TV or projector, so it restarts with it; keep the last
-# few boots' logs (capped, to spare the SD card) so a problem can still be looked into.
+# The box is often powered from the TV or projector, so it restarts with it; keep the logs
+# across reboots so a problem can still be looked into. They take a fixed amount of room:
+# at 50 MB in total the oldest 5 MB file is dropped as a new one starts.
 mkdir -p /etc/systemd/journald.conf.d /var/log/journal
-printf '[Journal]\nStorage=persistent\nSystemMaxUse=50M\n' > /etc/systemd/journald.conf.d/tvbox.conf
+printf '[Journal]\nStorage=persistent\nSystemMaxUse=50M\nSystemMaxFileSize=5M\nRuntimeMaxUse=16M\n' \
+  > /etc/systemd/journald.conf.d/tvbox.conf
 systemctl restart systemd-journald
 
 if [[ $FORCE_1080P -eq 1 ]]; then

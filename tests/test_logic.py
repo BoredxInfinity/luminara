@@ -624,3 +624,83 @@ def test_a_new_page_means_no_screensaver_and_gets_its_reporting_binding_back(tmp
         assert sent == [("Runtime.addBinding", {"name": SIGNAL})]
 
     asyncio.run(run())
+
+
+def test_watchdog_sends_a_stuck_page_home_then_replaces_it_and_drops_a_hung_browser(tmp_path, monkeypatch):
+    import asyncio
+
+    import server.browser as browser_mod
+    from server.browser import WATCH_STRIKES, Browser, CDPError
+    from server.config import Settings
+
+    monkeypatch.setattr(browser_mod, "WATCH_EVERY", 0)
+    b = Browser(Settings(data_dir=tmp_path), SERVICES, lambda: None)
+    b._session, b._target = "S", "T"
+    sent, page_ok, browser_ok = [], [False], [True]
+
+    async def fake_send(method, params=None, **kw):
+        sent.append(method)
+        if method == "Browser.getVersion" and not browser_ok[0]:
+            raise asyncio.TimeoutError
+        if method == "Runtime.evaluate" and not page_ok[0]:
+            raise CDPError("no answer")
+        return {}
+
+    b.send = fake_send
+
+    class WS:
+        closed = False
+
+        async def close(self):
+            self.closed = True
+
+    async def run():
+        ws = WS()
+        task = asyncio.create_task(b._watchdog(ws))
+        while sent.count("Runtime.evaluate") < 2 * WATCH_STRIKES:
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await asyncio.gather(*b._tasks)
+        # A minute without an answer: home; another minute: the tab is replaced.
+        assert sent.count("Page.navigate") == 1 and sent.count("Target.closeTarget") == 1
+        page_ok[0], browser_ok[0] = True, False
+        await asyncio.wait_for(task, 1)  # the browser stopped answering: connection dropped
+        assert ws.closed
+
+    asyncio.run(run())
+
+
+def test_nightly_refresh_only_when_idle_on_home_and_once_a_night(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    import server.main as main
+
+    restarts = []
+
+    async def restart(reason):
+        restarts.append(reason)
+        return True
+
+    monkeypatch.setattr(main, "restart_kiosk_browser", restart)
+    monkeypatch.setattr(main, "kiosk_browser", lambda: (123, 30 * 3600))
+    clock = {"hour": 4}
+    monkeypatch.setattr(main.time, "localtime", lambda: SimpleNamespace(tm_hour=clock["hour"], tm_yday=100))
+    browser = SimpleNamespace(saver_on=True, state={"view": "launcher"}, resume_saver=False)
+    hub = SimpleNamespace(browser=browser, cast=SimpleNamespace(active=False), mirror=SimpleNamespace(viewers=set()),
+                          _refreshed_day=-1)
+    refresh = main.Hub.nightly_refresh.__get__(hub)
+
+    async def run():
+        browser.state["view"] = "service"     # someone's watching Netflix: leave it
+        await refresh()
+        clock["hour"] = 14                    # afternoon: leave it
+        browser.state["view"] = "launcher"
+        await refresh()
+        assert not restarts
+        clock["hour"] = 4
+        await refresh()                       # 4 am, idle on the home screen: refresh
+        await refresh()                       # but only once that night
+        assert len(restarts) == 1 and browser.resume_saver
+
+    asyncio.run(run())

@@ -85,5 +85,6 @@ exec "$CHROMIUM" $BASE_FLAGS \
   --overscroll-history-navigation=0 \
   --disable-pinch \
   --hide-scrollbars \
+  --log-level=2 \
   $TVBOX_EXTRA_FLAGS \
   "$URL"
