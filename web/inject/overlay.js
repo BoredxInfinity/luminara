@@ -108,7 +108,11 @@
             box-shadow: 0 4vh 9vh rgba(0,0,0,.65), inset 0 .3vh 0 rgba(255,255,255,.08); }
     .platter { position: absolute; left: 3.5vh; top: 3.5vh; width: 45vh; height: 45vh; border-radius: 50%;
                background: radial-gradient(circle, #2b2b2b 0 69%, #8d8d8d 70% 71%, #444 72%);
-               box-shadow: 0 1.2vh 3vh rgba(0,0,0,.6); }
+               box-shadow: 0 1.2vh 3vh rgba(0,0,0,.6); perspective: 140vh; }
+    /* The disc lifts and flips when the song changes; the record inside it spins. */
+    .disc { position: absolute; inset: 0; border-radius: 50%; will-change: transform; }
+    .swapping .disc { z-index: 2; }  /* above the spindle while it's off the platter */
+    .swapping .record { animation-play-state: paused; }
     .record { position: absolute; inset: 1.2vh; border-radius: 50%;
               background: repeating-radial-gradient(circle, #0c0c0c 0 .25vh, #1a1a1a .3vh .5vh);
               animation: spin 1.8s linear infinite; }
@@ -124,7 +128,8 @@
            background: radial-gradient(circle at 40% 35%, #d9d9d9, #7b7b7b 55%, #3d3d3d);
            box-shadow: 0 .8vh 1.6vh rgba(0,0,0,.6); transform-origin: 50% 50%; transform: rotate(24deg);
            transition: transform 1.6s cubic-bezier(.3,.8,.3,1); }
-    .paused .arm { transform: rotate(4deg); }
+    .paused .arm, .swapping .arm { transform: rotate(4deg); }
+    .swapping .arm { transition-duration: .6s; }  /* off the record quickly; back on gently */
     .arm::before { content: ""; position: absolute; left: 2.4vh; top: 3vh; width: 1vh; height: 34vh; border-radius: .5vh;
                    background: linear-gradient(90deg, #8a8a8a, #e6e6e6 45%, #8a8a8a); transform-origin: 50% 0; transform: rotate(8deg); }
     .arm::after { content: ""; position: absolute; left: .2vh; top: 35.5vh; width: 3.2vh; height: 5vh; border-radius: .6vh;
@@ -187,12 +192,13 @@
     u.ttBg = el("div", "tt-bg", u.tt);
     const deck = el("div", "deck", u.tt);
     const platter = el("div", "platter", deck);
-    const record = el("div", "record", platter);
+    u.disc = el("div", "disc", platter);
+    const record = el("div", "record", u.disc);
     u.label = el("div", "label", record);
-    el("div", "shine", platter);
+    el("div", "shine", u.disc);
     el("div", "spindle", platter);
     el("div", "arm", deck);
-    const meta = el("div", "meta", u.tt);
+    const meta = u.meta = el("div", "meta", u.tt);
     const eyebrow = el("div", "eyebrow", meta);
     const eq = el("span", "eq", eyebrow);
     el("i", "", eq); el("i", "", eq); el("i", "", eq);
@@ -331,6 +337,8 @@
   function startSaver() {
     const u = ensure();
     saverOn = true;
+    trackShown = "";                 // the first song goes straight on, no swap
+    u.saver.classList.remove("music");
     signal({ saver: true });
     pauseTrailers();
     startedAt = performance.now();
@@ -363,6 +371,7 @@
     u.clockTime.textContent = `${t12.time} ${t12.suffix}`;
     u.clockDate.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
     const music = nowPlaying();
+    const wasMusic = u.saver.classList.contains("music");
     u.saver.classList.toggle("music", !!music);
     if (!music) {
       if (saverOn && !rafId) rafId = requestAnimationFrame(draw);  // music stopped: back to the dots
@@ -370,15 +379,63 @@
     }
     u.saver.classList.toggle("paused", !music.playing);
     u.source.textContent = music.source;
-    u.title.textContent = music.title;
-    u.artist.textContent = music.artist || "";
-    u.album.textContent = music.album || "";
-    if (music.art && music.art !== artShown) {
-      artShown = music.art;
-      const css = `url("${music.art.replace(/"/g, "%22")}")`;
+    const changed = trackKey(music) !== trackShown;
+    // A new song while the record is already on the turntable: swap records. Otherwise
+    // (first song, screensaver just starting) put it straight on.
+    if (swapping) pendingTrack = music;
+    else if (changed && trackShown && saverOn && wasMusic) swapRecord(music);
+    else if (changed) showTrack(music);
+  }
+
+  let trackShown = "", swapping = false, pendingTrack = null;
+  const trackKey = (m) => `${m.title}|${m.artist}|${m.art}`;
+
+  function showTrack(m) {
+    const u = ui;
+    trackShown = trackKey(m);
+    u.title.textContent = m.title;
+    u.artist.textContent = m.artist || "";
+    u.album.textContent = m.album || "";
+    if (m.art !== artShown) {
+      artShown = m.art || "";
+      const css = artShown ? `url("${artShown.replace(/"/g, "%22")}")` : "";
       u.label.style.backgroundImage = css;
       u.ttBg.style.backgroundImage = css;
     }
+  }
+
+  // The song changed: the tonearm lifts, the record rises off the platter, flips over to
+  // show the new album, drops back down, and the tonearm swings back onto it. The label
+  // and titles change while the record is edge-on, so the flip reveals them.
+  const LIFT = "translateY(-6vh) scale(1.1)";
+  async function swapRecord(m) {
+    const u = ui;
+    swapping = true;
+    trackShown = trackKey(m);
+    const step = (frames, duration, easing) =>
+      u.disc.animate(frames, { duration, easing, fill: "forwards" }).finished;
+    try {
+      u.saver.classList.add("swapping");                     // tonearm off, record stops
+      await new Promise((r) => setTimeout(r, 650));
+      u.meta.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 450, fill: "forwards" });
+      await step([{ transform: "none", boxShadow: "0 0 0 rgba(0,0,0,0)" },
+                  { transform: LIFT, boxShadow: "0 5vh 7vh rgba(0,0,0,.7)" }], 550, "cubic-bezier(.3,.7,.4,1)");
+      await step([{ transform: `${LIFT} rotateY(0deg)` }, { transform: `${LIFT} rotateY(90deg)` }], 320, "ease-in");
+      showTrack(m);                                            // edge-on: the other side is the new song
+      await step([{ transform: `${LIFT} rotateY(-90deg)` }, { transform: `${LIFT} rotateY(0deg)` }], 320, "ease-out");
+      u.meta.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, fill: "forwards" });
+      await step([{ transform: LIFT, boxShadow: "0 5vh 7vh rgba(0,0,0,.7)" },
+                  { transform: "none", boxShadow: "0 0 0 rgba(0,0,0,0)" }], 520, "cubic-bezier(.5,0,.55,1.3)");  // a little bounce
+    } catch { /* animation cancelled (screensaver closed): just show the new song */
+      showTrack(m);
+    } finally {
+      for (const a of [...u.disc.getAnimations(), ...u.meta.getAnimations()]) a.cancel();
+      u.saver.classList.remove("swapping");                  // tonearm swings back onto the record
+      swapping = false;
+    }
+    const next = pendingTrack;
+    pendingTrack = null;
+    if (next && saverOn && trackKey(next) !== trackShown) swapRecord(next);
   }
 
   // ---- particle clock -----------------------------------------------------------

@@ -24,8 +24,8 @@ from .config import ROOT, WEB_DIR, Settings, load_services, load_settings
 from .cast import Cast
 from .logos import Logos
 from .mirror import Mirror
-from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, SPOTIFY_POLL_CHOICES, VOLUME_CHOICES, UserSettings
-from .spotify import Spotify, SpotifyError
+from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
+from .spotify import POLL_SECONDS, Spotify, SpotifyError
 from .system import System, system_info
 from .tls import Certificate, ensure_certificate
 from .updater import Updater
@@ -164,7 +164,7 @@ class Hub:
             self._spotify_watch = asyncio.create_task(self.watch_spotify())
 
     async def watch_spotify(self) -> None:
-        """While the screensaver shows: what's playing on the account, every few seconds.
+        """While the screensaver shows: what's playing on the account, every POLL_SECONDS.
         Playing shows the turntable; paused or stopped for over a minute goes back to the clock."""
         shown, quiet_since = False, None
         while True:
@@ -181,7 +181,7 @@ class Hub:
                         await self.browser.music(None)
                 except (CDPError, asyncio.TimeoutError):
                     pass
-            await asyncio.sleep(self.prefs["spotify_poll_seconds"])
+            await asyncio.sleep(POLL_SECONDS)  # a rate-limited check is just tried again here
 
     async def on_install_done(self, ok: bool) -> None:
         """Only reached when the update didn't restart us: it failed, or there was nothing to do."""
@@ -489,8 +489,7 @@ async def pair(request: web.Request):
 @routes.get("/api/settings")
 async def get_settings(request: web.Request):
     return web.json_response({"values": request.app[HUB].prefs.values,
-                              "choices": {"saver_minutes": SAVER_CHOICES, "boot_volume": VOLUME_CHOICES,
-                                          "spotify_poll_seconds": SPOTIFY_POLL_CHOICES}})
+                              "choices": {"saver_minutes": SAVER_CHOICES, "boot_volume": VOLUME_CHOICES}})
 
 
 @routes.post("/api/settings")

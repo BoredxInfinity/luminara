@@ -4,7 +4,7 @@
 
 const sheet = $("settings");
 let prefs = {};
-let choices = { saver_minutes: [0, 1, 2, 5, 10, 15, 30], boot_volume: [0, 25, 50, 75, 100], spotify_poll_seconds: [5, 10, 15, 30, 60] };
+let choices = { saver_minutes: [0, 1, 2, 5, 10, 15, 30], boot_volume: [0, 25, 50, 75, 100] };
 let spotify = {};
 
 async function saveSetting(changes) {
@@ -63,8 +63,6 @@ function paintSettings() {
     (v) => (v === 0 ? "Off" : `${v} min`), (v) => saveSetting({ saver_minutes: v }));
   segmented($("set-volume"), choices.boot_volume, prefs.boot_volume,
     (v) => (v === 0 ? "As left" : `${v}%`), (v) => saveSetting({ boot_volume: v }));
-  segmented($("set-spotify-poll"), choices.spotify_poll_seconds, prefs.spotify_poll_seconds,
-    (v) => `${v} s`, (v) => saveSetting({ spotify_poll_seconds: v }));
   $("set-saver-clock").checked = prefs.saver_clock;
   $("set-h264").checked = prefs.prefer_h264;
   $("set-lite").checked = prefs.lite_browser;

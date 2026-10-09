@@ -482,3 +482,42 @@ def test_spotify_finish_route_replies_once_connected_and_on_a_repeated_paste(tmp
     assert status == 200 and data["connected"] and data["user"] == "AravBansal"
     status, data = asyncio.run(call())  # tapping Finish again with the same address
     assert status == 200 and data["connected"]
+
+
+def test_spotify_rate_limit_skips_one_check_and_the_next_one_goes_ahead(tmp_path):
+    import asyncio
+    import time
+
+    from server.spotify import POLL_SECONDS, Spotify, SpotifyError
+
+    class Resp:
+        def __init__(self, status, body=None):
+            self.status, self.body, self.headers = status, body, {"Retry-After": "3600"}
+
+        async def json(self, content_type=None):
+            return self.body
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class Http:
+        def __init__(self, answers):
+            self.answers = list(answers)
+
+        def get(self, url, **kw):
+            return self.answers.pop(0)
+
+    sp = Spotify(tmp_path, 8080)
+    sp.data = {"client_id": "x" * 32, "refresh_token": "RT", "access_token": "AT", "expires_at": time.time() + 600}
+    http = Http([Resp(429), Resp(200, {"is_playing": True})])
+
+    async def run():
+        with pytest.raises(SpotifyError):
+            await sp._get(http, "/me/player")
+        return await sp._get(http, "/me/player")  # straight away: Retry-After is not waited out
+
+    assert asyncio.run(run()) == {"is_playing": True}
+    assert POLL_SECONDS <= 5

@@ -1,7 +1,11 @@
 """What's playing on your Spotify account, for the screensaver's turntable.
 
 Spotify has no push or webhook for playback, so the box asks (GET /v1/me/player) every
-few seconds, and only while the screensaver is showing; otherwise this is idle.
+POLL_SECONDS, and only while the screensaver is showing; otherwise this is idle.
+Spotify publishes no number for its limit (a rolling 30-second window, lower for apps in
+development mode); one call every 3 s is the pace common "now playing" apps use and far
+below reported limits. If Spotify does answer 429, that check is skipped and the next one
+goes ahead as normal.
 
 Login is OAuth with PKCE, so no client secret is stored. Spotify only allows an https
 redirect address or a loopback one, so the box registers http://127.0.0.1:<port>/spotify/
@@ -30,6 +34,7 @@ TOKEN = "https://accounts.spotify.com/api/token"
 API = "https://api.spotify.com/v1"
 SCOPES = "user-read-playback-state user-read-currently-playing"
 LOGIN_TTL = 15 * 60  # seconds a login link stays valid
+POLL_SECONDS = 3     # between "what's playing?" checks while the screensaver is up
 
 
 class SpotifyError(Exception):
@@ -42,7 +47,6 @@ class Spotify:
         self.redirect_uri = f"http://127.0.0.1:{port}/spotify/callback"
         self._pending: dict[str, dict] = {}  # login state -> {verifier, client_id, at}
         self._art: dict[str, str] = {}       # album art URL -> data: URL (last few)
-        self._retry_after = 0.0
         self._done = ""  # the state of the last login finished
         try:
             self.data = json.loads(self._file.read_text())
@@ -144,16 +148,13 @@ class Spotify:
         return self.data["access_token"]
 
     async def _get(self, http: aiohttp.ClientSession, path: str) -> dict | None:
-        if time.time() < self._retry_after:
-            raise SpotifyError("rate limited")
         token = await self._access_token(http)
         async with http.get(API + path, headers={"Authorization": f"Bearer {token}"},
                             timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 204:
                 return None  # nothing playing
             if resp.status == 429:
-                self._retry_after = time.time() + int(resp.headers.get("Retry-After", "30"))
-                raise SpotifyError("rate limited")
+                raise SpotifyError("rate limited; trying again at the next check")
             if resp.status == 401:
                 self.data["expires_at"] = 0  # refresh next time
                 raise SpotifyError("token expired")

@@ -203,7 +203,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
 |---|---|
 | Apps | Show or hide each app on the TV and remote |
 | Screensaver | Off / 1–30 minutes, show the time, preview it on the TV |
-| Spotify | Connect your account, how often to check what's playing (5–60 s, default 30), disconnect |
+| Spotify | Connect your account, disconnect |
 | Sound | Volume when the box starts (or leave it as it was) |
 | Performance | Smooth video (H.264), Lite browser (applies after **Restart TV display**) |
 | Updates | Check automatically, Check now, Install |
@@ -231,8 +231,9 @@ Logos and icons aren't stored in this repo. The Pi downloads them from Wikimedia
 
 Spotify isn't an app on the TV. Instead, while the screensaver is up, the box asks Spotify what's playing on your account (on your phone, laptop, a speaker, anywhere) and shows it on the turntable.
 
-- **Only during the screensaver.** The TV page tells the controller when the screensaver comes on and goes away; it checks Spotify only in between. Spotify has no webhook or push for playback, so it asks every 30 s by default (5–60 s in Settings).
-- Music starting shows the turntable at the next check. Paused, the record stops and the arm lifts. After a minute with nothing playing, the screensaver goes back to the clock.
+- **Only during the screensaver.** The TV page tells the controller when the screensaver comes on and goes away; it checks Spotify only in between. Spotify has no webhook or push for playback, so it asks every 3 seconds. Spotify publishes no number for its rate limit (a rolling 30-second window, lower for apps in development mode); 10 calls per 30 s is the pace common "now playing" apps use. If Spotify does answer "too many requests", that check is skipped and the next one 3 s later goes ahead.
+- Music starting shows the turntable within a few seconds. Paused, the record stops and the arm lifts. After a minute with nothing playing, the screensaver goes back to the clock.
+- **When the song changes**, the tonearm lifts, the record rises off the platter and flips over to reveal the new album art, drops back into place, and the tonearm swings back onto it.
 - **Connecting (once, from Settings → Spotify on your phone):**
   1. At [Spotify for Developers](https://developer.spotify.com/dashboard), create an app (any name, tick "Web API") and add the Redirect URI shown in Settings: `http://127.0.0.1:8080/spotify/callback`. Spotify only allows HTTPS or loopback addresses there, which is why it's 127.0.0.1. Spotify requires the app's owner to have Premium, and allows up to 5 users per app.
   2. Paste the app's Client ID into Settings and tap **Log in with Spotify**.
