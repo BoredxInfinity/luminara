@@ -162,7 +162,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - It's kept light: 20 frames a second while the particles only shimmer (30 while they move), and muted trailers playing behind it are paused until you're back.
   - The **Screensaver** button on the remote starts it right away (the turntable if music is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
-  - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), or in the page on the TV, it shows a turntable with the album art spinning on the record, plus the song, artist and album. See [Spotify on the screensaver](#spotify-on-the-screensaver).
+  - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), or in the page on the TV, it shows a turntable with the album art spinning on the record, plus the song, artist and album, on black, with the record player glowing in the album's average colour. See [Spotify on the screensaver](#spotify-on-the-screensaver).
 - **D-pad on Netflix, Prime Video and JioHotstar:** these are mouse websites (only YouTube has a real TV interface in a browser), so the arrows move a white focus ring between titles, buttons and menus, and OK clicks.
   - Right at the end of a row pages the row, like a TV app. Up/down go row by row.
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.

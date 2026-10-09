@@ -118,14 +118,15 @@
     .closing .meta > :nth-child(3) { animation-delay: .1s; }
     .closing .meta > :nth-child(4) { animation-delay: .15s; }
     @keyframes sink { to { opacity: 0; transform: translateY(-2vh); } }
-    /* A blurred album-art backdrop. Blurring a small copy and scaling it up looks the same
-       as blurring a full-screen one and costs the Pi's GPU a fraction as much. */
-    .tt-bg { position: absolute; left: 50%; top: 50%; width: 24vw; height: 24vh; background-size: cover;
-             background-position: center; filter: blur(13px) saturate(1.4) brightness(.45);
-             transform: translate(-50%, -50%) scale(5.4); }
+    /* The deck glows in the album's average colour on a plain black screen. The glow reaches
+       at most spread + blur = 5.3vw past the deck, which sits 8vw from the screen's edge
+       (and far more from the top and bottom), so it never touches the edges. */
     .deck { position: relative; flex: none; width: 62vh; height: 52vh; border-radius: 3vh;
             background: linear-gradient(160deg, #3a2a1f, #1d1510 60%, #120d0a);
-            box-shadow: 0 4vh 9vh rgba(0,0,0,.65), inset 0 .3vh 0 rgba(255,255,255,.08); }
+            --glow: hsla(0, 0%, 55%, .35);
+            box-shadow: 0 0 min(7vh, 4.5vw) min(1.2vh, .8vw) var(--glow), 0 4vh 9vh rgba(0,0,0,.65),
+                        inset 0 .3vh 0 rgba(255,255,255,.08);
+            transition: box-shadow 1.2s ease; }
     .platter { position: absolute; left: 3.5vh; top: 3.5vh; width: 45vh; height: 45vh; border-radius: 50%;
                background: radial-gradient(circle, #2b2b2b 0 69%, #8d8d8d 70% 71%, #444 72%);
                box-shadow: 0 1.2vh 3vh rgba(0,0,0,.6); perspective: 140vh; }
@@ -209,8 +210,7 @@
     u.saver = el("div", "saver", layer);
     u.canvas = el("canvas", "", u.saver);
     u.tt = el("div", "tt", u.saver);
-    u.ttBg = el("div", "tt-bg", u.tt);
-    const deck = el("div", "deck", u.tt);
+    const deck = u.deck = el("div", "deck", u.tt);
     const platter = el("div", "platter", deck);
     u.disc = el("div", "disc", platter);
     const record = el("div", "record", u.disc);
@@ -477,8 +477,53 @@
       artShown = m.art || "";
       const css = artShown ? `url("${artShown.replace(/"/g, "%22")}")` : "";
       u.label.style.backgroundImage = css;
-      u.ttBg.style.backgroundImage = css;
+      const key = trackShown;
+      averageColour(artShown).then((rgb) => {
+        if (trackShown === key) u.deck.style.setProperty("--glow", glowColour(rgb));  // still this song?
+      });
     }
+  }
+
+  // The album art's average colour, from a 24x24 copy. Spotify art arrives as a data: URL,
+  // which a canvas may read; a picture from another site can't be, so it gets the default.
+  function averageColour(src) {
+    return new Promise((resolve) => {
+      if (!src) return resolve(null);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement("canvas");
+          c.width = c.height = 24;
+          const g = c.getContext("2d", { willReadFrequently: true });
+          g.drawImage(img, 0, 0, 24, 24);
+          const d = g.getImageData(0, 0, 24, 24).data;
+          let r = 0, gr = 0, b = 0, n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i + 3] < 128) continue;  // see-through pixels aren't part of the cover
+            r += d[i]; gr += d[i + 1]; b += d[i + 2]; n++;
+          }
+          resolve(n ? [r / n, gr / n, b / n] : null);
+        } catch { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  }
+
+  // Keep the average's hue and saturation, but bring its lightness into a range that glows
+  // on black: a dark cover's true average would be an invisible near-black.
+  function glowColour(rgb) {
+    if (!rgb) return "hsla(0, 0%, 55%, .35)";
+    const [r, g, b] = rgb.map((v) => v / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+    let h = 0, s = 0;
+    if (d) {
+      s = d / (1 - Math.abs(2 * l - 1));
+      h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      h = (h * 60 + 360) % 360;
+    }
+    const light = Math.min(62, Math.max(42, l * 100));
+    return `hsla(${Math.round(h)}, ${Math.round(Math.min(100, s * 100 * 1.15))}%, ${Math.round(light)}%, .6)`;
   }
 
   // The song changed: the tonearm lifts, the record rises off the platter, flips over to
