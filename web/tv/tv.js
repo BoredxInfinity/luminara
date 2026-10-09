@@ -149,27 +149,37 @@ function glowFrame(now) {
 }
 
 let glowColor = "";
+// Runs on every D-pad press, so it only touches what changed: no page-wide style changes
+// and nothing that makes the browser lay the page out there and then.
+function setText(el, text) {
+  if (el.textContent !== text) el.textContent = text;
+}
+
 function paint(quiet = false) {
   for (const li of $("tiles").children) {
-    li.setAttribute("aria-selected", String(focusArea === "tiles" && li.dataset.id === selected));
+    const on = String(focusArea === "tiles" && li.dataset.id === selected);
+    if (li.getAttribute("aria-selected") !== on) li.setAttribute("aria-selected", on);
   }
   const s = services.find((x) => x.id === selected);
   if (!s) return;
-  document.documentElement.style.setProperty("--accent", s.color);
 
   // Fade the ambient glow to the new colour.
   if (s.color !== glowColor) {
     glowTo(s.color);
+    $("hero-eyebrow").style.color = s.color;
     glowColor = s.color;
   }
 
-  const hero = document.querySelector(".hero");
   const opened = state.recent?.[s.id];
   const newest = Math.max(0, ...Object.values(state.recent || {}));
-  $("hero-eyebrow").textContent = opened && opened === newest ? "Jump back in" : "Watch on";
-  $("hero-title").textContent = s.name;
-  $("hero-sub").textContent = [s.tagline, opened ? `Opened ${ago(opened)}` : ""].filter(Boolean).join("  ·  ");
-  if (!quiet) { hero.classList.remove("swap"); void hero.offsetWidth; hero.classList.add("swap"); }
+  setText($("hero-eyebrow"), opened && opened === newest ? "Jump back in" : "Watch on");
+  setText($("hero-title"), s.name);
+  setText($("hero-sub"), [s.tagline, opened ? `Opened ${ago(opened)}` : ""].filter(Boolean).join("  ·  "));
+  if (!quiet) {
+    document.querySelector(".hero").animate(
+      [{ opacity: 0, transform: "translateY(1vh)" }, { opacity: 1, transform: "none" }],
+      { duration: 450, easing: "ease-out" });
+  }
 }
 
 function select(id, announce = true) {

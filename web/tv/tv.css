@@ -64,8 +64,6 @@ main { position: relative; display: flex; flex-direction: column; justify-conten
 .eyebrow { font-size: 1vw; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
 #hero-title { font-size: 4.4vw; font-weight: 750; letter-spacing: -.03em; line-height: 1.05; margin: .4vh 0 .6vh; }
 #hero-sub { font-size: 1.3vw; }
-.hero.swap { animation: swap .45s ease-out; }
-@keyframes swap { from { opacity: 0; transform: translateY(1vh); } }
 
 .tiles { list-style: none; display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 2vw; }
 .tile {
