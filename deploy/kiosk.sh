@@ -38,7 +38,17 @@ if [ -f "$PREFS" ]; then
   sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$PREFS"
 fi
 
-CHROMIUM="$(command -v chromium || command -v chromium-browser)"
+# Raspberry Pi OS's launcher script (/usr/bin/chromium) adds flags meant for a desktop,
+# among them --force-renderer-accessibility, which has every page keep an accessibility
+# tree up to date as it changes: real CPU time on Netflix or YouTube, for no screen reader.
+# Start the browser itself instead, with the launcher's flags that matter here.
+if [ -x /usr/lib/chromium/chromium ]; then
+  CHROMIUM=/usr/lib/chromium/chromium
+  BASE_FLAGS="--use-angle=gles --enable-gpu-rasterization --no-default-browser-check --disable-pings"
+else
+  CHROMIUM="$(command -v chromium || command -v chromium-browser)"
+  BASE_FLAGS=""
+fi
 
 # Flags that follow Settings on the remote (e.g. "Lite browser"), written by the controller.
 TVBOX_DISABLE_FEATURES="" TVBOX_EXTRA_FLAGS=""
@@ -47,12 +57,17 @@ SETTINGS_ENV="${TVBOX_DATA_DIR:-$HOME/.local/state/tvbox}/chromium.env"
 [ -f "$SETTINGS_ENV" ] && . "$SETTINGS_ENV"
 # BackForwardCache would keep the app you just left frozen in memory in case you press
 # Back; SpareRendererForSitePerProcess keeps an idle renderer warm. Neither is worth the
-# RAM here: leaving an app should free everything it used.
-FEATURES="Translate,MediaRouter,OptimizationHints,BackForwardCache,SpareRendererForSitePerProcess${TVBOX_DISABLE_FEATURES:+,$TVBOX_DISABLE_FEATURES}"
+# RAM here: leaving an app should free everything it used. The WebUIOmnibox* ones keep
+# the address bar's suggestion popup loaded in its own renderer (~60 MB) for a kiosk
+# that has no address bar.
+FEATURES="Translate,MediaRouter,OptimizationHints,BackForwardCache,SpareRendererForSitePerProcess"
+FEATURES="$FEATURES,WebUIOmniboxPopup,WebUIOmniboxAimPopup,WebUIOmniboxFullPopup"
+FEATURES="$FEATURES${TVBOX_DISABLE_FEATURES:+,$TVBOX_DISABLE_FEATURES}"
 
 # --remote-debugging-port binds to 127.0.0.1 only. It needs a non-default
 # --user-data-dir on current Chromium, which we want anyway so logins persist.
-exec "$CHROMIUM" \
+# shellcheck disable=SC2086
+exec "$CHROMIUM" $BASE_FLAGS \
   --kiosk \
   --ozone-platform=wayland \
   --user-data-dir="$PROFILE" \

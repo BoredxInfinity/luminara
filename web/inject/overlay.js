@@ -91,6 +91,7 @@
     .clock b { display: block; font-size: 12vh; font-weight: 200; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
     .clock span { font-size: 2.6vh; font-weight: 500; color: rgba(255,255,255,.7); }
     .saver:not(.music) .clock { display: none; }  /* the dots are the clock */
+    .saver.plain:not(.music) .clock { display: block; }  /* unless there's no WebGL to draw them */
     .music .clock { left: auto; top: 6vh; right: 6vw; translate: none; text-align: right; }
     .music .clock b { font-size: 6vh; }
 
@@ -121,17 +122,20 @@
     /* The deck glows in the album's average colour on a plain black screen. The glow reaches
        at most spread + blur = 5.3vw past the deck, which sits 8vw from the screen's edge
        (and far more from the top and bottom), so it never touches the edges. */
-    .deck { position: relative; flex: none; width: 62vh; height: 52vh; border-radius: 3vh;
+    .deck { position: relative; isolation: isolate; flex: none; width: 62vh; height: 52vh; border-radius: 3vh;
             background: linear-gradient(160deg, #3a2a1f, #1d1510 60%, #120d0a);
-            --glow: hsla(0, 0%, 55%, .35);
-            box-shadow: 0 0 min(7vh, 4.5vw) min(1.2vh, .8vw) var(--glow), 0 4vh 9vh rgba(0,0,0,.65),
-                        inset 0 .3vh 0 rgba(255,255,255,.08);
-            transition: box-shadow 1.2s ease; }
+            box-shadow: 0 4vh 9vh rgba(0,0,0,.65), inset 0 .3vh 0 rgba(255,255,255,.08); }
+    /* Two glows crossfade when the colour changes: fading opacity is the GPU's job, while
+       changing a shadow's colour would repaint the whole deck on every frame. */
+    .halo { position: absolute; inset: 0; border-radius: inherit; z-index: -1; opacity: 0; transition: opacity 1.2s ease;
+            box-shadow: 0 0 min(7vh, 4.5vw) min(1.2vh, .8vw) var(--glow, hsla(0, 0%, 55%, .35)); }
+    .halo.on { opacity: 1; }
     .platter { position: absolute; left: 3.5vh; top: 3.5vh; width: 45vh; height: 45vh; border-radius: 50%;
                background: radial-gradient(circle, #2b2b2b 0 69%, #8d8d8d 70% 71%, #444 72%);
                box-shadow: 0 1.2vh 3vh rgba(0,0,0,.6); perspective: 140vh; }
     /* The disc lifts and flips when the song changes; the record inside it spins. */
     .disc { position: absolute; inset: 0; border-radius: 50%; will-change: transform; }
+    .lift { position: absolute; inset: 1.2vh; border-radius: 50%; box-shadow: 0 5vh 7vh rgba(0,0,0,.7); opacity: 0; }
     .swapping .disc { z-index: 2; }  /* above the spindle while it's off the platter */
     .swapping .record { animation-play-state: paused; }
     .record { position: absolute; inset: 1.2vh; border-radius: 50%;
@@ -162,10 +166,11 @@
     .meta p { font-size: 3.4vh; color: rgba(255,255,255,.82); font-weight: 500; }
     .meta p + p { font-size: 2.6vh; color: rgba(255,255,255,.55); margin-top: .8vh; }
     .eq { display: inline-flex; gap: .5vh; align-items: flex-end; height: 2.2vh; margin-right: 1.2vh; vertical-align: -.2vh; }
-    .eq i { width: .5vh; background: #1ed760; border-radius: .3vh; animation: eq 1s ease-in-out infinite; }
+    .eq i { width: .5vh; height: 100%; background: #1ed760; border-radius: .3vh; transform-origin: 50% 100%;
+            animation: eq 1s ease-in-out infinite; }
     .eq i:nth-child(2) { animation-delay: -.4s; } .eq i:nth-child(3) { animation-delay: -.7s; }
     .paused .eq i { animation-play-state: paused; }
-    @keyframes eq { 0%, 100% { height: 30%; } 50% { height: 100%; } }
+    @keyframes eq { 0%, 100% { transform: scaleY(.3); } 50% { transform: none; } }  /* transform: no relayout per frame */
     @keyframes spin { to { transform: rotate(360deg); } }
   `;
   const ICONS = {
@@ -211,7 +216,9 @@
     u.canvas = el("canvas", "", u.saver);
     u.tt = el("div", "tt", u.saver);
     const deck = u.deck = el("div", "deck", u.tt);
+    u.halos = [el("div", "halo", deck), el("div", "halo", deck)];
     const platter = el("div", "platter", deck);
+    u.lift = el("div", "lift", platter);  // the record's shadow while it's lifted off
     u.disc = el("div", "disc", platter);
     const record = el("div", "record", u.disc);
     u.label = el("div", "label", record);
@@ -343,7 +350,7 @@
     else if (!videoPlaying()) startSaver();
   }, 5000);
 
-  let rafId = 0, startedAt = 0, metaTimer = 0, lastFrame = 0, moving = true;
+  let rafId = 0, startedAt = 0, metaTimer = 0, lastFrame = 0;
 
   // Muted autoplaying trailers (Netflix, Prime, JioHotstar menus) keep decoding video
   // under the screensaver for nobody: pause them while it's up.
@@ -376,6 +383,7 @@
     u.saver.classList.remove("leaving");
     u.clock.style.display = cfg.saverClock ? "" : "none";
     dots = [];  // dots drift in from all over the screen
+    shown = "";
     refreshSaver();
     metaTimer = setInterval(refreshSaver, 2000);  // track changes, clock
     rafId = requestAnimationFrame(draw);
@@ -392,7 +400,12 @@
     clearInterval(metaTimer);
     u.saver.classList.add("leaving");
     u.saver.classList.remove("on");
-    setTimeout(() => { if (!saverOn) { cancelAnimationFrame(rafId); rafId = 0; } }, 800);
+    setTimeout(() => {
+      if (saverOn) return;
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+      gpuRelease();
+    }, 800);
   }
 
   let artShown = "";
@@ -506,7 +519,7 @@
       u.label.style.backgroundImage = css;
       const key = trackShown;
       averageColour(artShown).then((rgb) => {
-        if (trackShown === key) u.deck.style.setProperty("--glow", glowColour(rgb));  // still this song?
+        if (trackShown === key) glowTo(glowColour(rgb));  // still this song?
       });
     }
   }
@@ -535,6 +548,16 @@
       img.onerror = () => resolve(null);
       img.src = src;
     });
+  }
+
+  let halo = 0;
+  function glowTo(colour) {
+    const [next, prev] = [ui.halos[halo ^ 1], ui.halos[halo]];
+    if (prev.classList.contains("on") && prev.style.getPropertyValue("--glow") === colour) return;
+    next.style.setProperty("--glow", colour);
+    next.classList.add("on");
+    prev.classList.remove("on");
+    halo ^= 1;
   }
 
   // Keep the average's hue and saturation, but bring its lightness into a range that glows
@@ -567,18 +590,18 @@
       u.saver.classList.add("swapping");                     // tonearm off, record stops
       await new Promise((r) => setTimeout(r, 650));
       u.meta.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 450, fill: "forwards" });
-      await step([{ transform: "none", boxShadow: "0 0 0 rgba(0,0,0,0)" },
-                  { transform: LIFT, boxShadow: "0 5vh 7vh rgba(0,0,0,.7)" }], 550, "cubic-bezier(.3,.7,.4,1)");
+      u.lift.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 550, fill: "forwards" });
+      await step([{ transform: "none" }, { transform: LIFT }], 550, "cubic-bezier(.3,.7,.4,1)");
       await step([{ transform: `${LIFT} rotateY(0deg)` }, { transform: `${LIFT} rotateY(90deg)` }], 320, "ease-in");
       showTrack(m);                                            // edge-on: the other side is the new song
       await step([{ transform: `${LIFT} rotateY(-90deg)` }, { transform: `${LIFT} rotateY(0deg)` }], 320, "ease-out");
       u.meta.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 500, fill: "forwards" });
-      await step([{ transform: LIFT, boxShadow: "0 5vh 7vh rgba(0,0,0,.7)" },
-                  { transform: "none", boxShadow: "0 0 0 rgba(0,0,0,0)" }], 520, "cubic-bezier(.5,0,.55,1.3)");  // a little bounce
+      u.lift.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 520, fill: "forwards" });
+      await step([{ transform: LIFT }, { transform: "none" }], 520, "cubic-bezier(.5,0,.55,1.3)");  // a little bounce
     } catch { /* animation cancelled (screensaver closed): just show the new song */
       showTrack(m);
     } finally {
-      for (const a of [...u.disc.getAnimations(), ...u.meta.getAnimations()]) a.cancel();
+      for (const a of [...u.disc.getAnimations(), ...u.meta.getAnimations(), ...u.lift.getAnimations()]) a.cancel();
       u.saver.classList.remove("swapping");                  // tonearm swings back onto the record
       swapping = false;
     }
@@ -696,7 +719,7 @@
     return { pts, size };
   }
 
-  let dots = [];       // {x, y, s (current), fx, fy, fs (from), tx, ty, ts (to), t0, dur, key}
+  let dots = [];       // {x, y, s (current), fx, fy, fs (from), tx, ty, ts (to), t0, dur, phase, key}
   let shown = "", shownW = 0, shownH = 0;
   // What's on screen: the time, plus the date when it's turned on in Settings.
   function stamp(d) {
@@ -705,15 +728,28 @@
   }
   const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
 
+  // Where each particle is right now (the GPU works this out for drawing; the page only
+  // needs it when it sends particles somewhere new).
+  function settle(now) {
+    for (const d of dots) {
+      if (d.t0 === undefined) continue;
+      const k = ease(Math.min(1, Math.max(0, (now - d.t0) / d.dur)));
+      d.x = d.fx + (d.tx - d.fx) * k;
+      d.y = d.fy + (d.ty - d.fy) * k;
+      d.s = d.fs + (d.ts - d.fs) * k;
+    }
+  }
+
   // Into the turntable: every particle streams into a disc where the record will sit.
   function gatherInto(c) {
     const now = performance.now();
+    settle(now);
     for (const d of dots) {
       const a = Math.random() * 6.2832, rr = c.r * 0.92 * Math.sqrt(Math.random());  // even over the disc
       Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: c.x + Math.cos(a) * rr, ty: c.y + Math.sin(a) * rr,
                          ts: d.s * 0.8, key: "", t0: now + Math.random() * 250, dur: 900 });
     }
-    moving = true;
+    dirty = true;
   }
 
   // Out of the turntable: the particles start packed at the record's centre and the next
@@ -731,14 +767,15 @@
   function retarget(now, w, h, scatter) {
     const { t, date, key } = stamp(new Date());
     const { pts, size } = layout(t, date, w, h);
-    const fromBurst = !!burstOrigin;
+    const origin = burstOrigin;  // coming out of the record rather than drifting in
     burstOrigin = null;
     shown = key; shownW = w; shownH = h;
+    settle(now);
     if (scatter || dots.length !== dotCount()) {  // fresh start: drift in from all over the screen
-      const o = burstOrigin;
       dots = Array.from({ length: dotCount() }, () => {
-        const a = Math.random() * 6.2832, rr = o ? o.r * 0.35 * Math.random() : 0;
-        const x = o ? o.x + Math.cos(a) * rr : Math.random() * w, y = o ? o.y + Math.sin(a) * rr : Math.random() * h;
+        const a = Math.random() * 6.2832, rr = origin ? origin.r * 0.35 * Math.random() : 0;
+        const x = origin ? origin.x + Math.cos(a) * rr : Math.random() * w;
+        const y = origin ? origin.y + Math.sin(a) * rr : Math.random() * h;
         return { x, y, s: size / SUB, key: "", phase: Math.random() * 6.2832 };
       });
     }
@@ -774,19 +811,124 @@
       plan.set(d, best);
       d.phase = owner.get(best).phase;
     }
+    const drift = scatter && !origin;
     for (const [d, p] of plan) {
       const key = keyOf(p);
       if (key === d.key && !scatter) continue;
       Object.assign(d, { fx: d.x, fy: d.y, fs: d.s, tx: p.x, ty: p.y, ts: p.s, key,
-                         t0: now + Math.random() * (scatter && !fromBurst ? 900 : 350), dur: scatter && !fromBurst ? 2600 : 1500 });
+                         t0: now + Math.random() * (drift ? 900 : 350), dur: drift ? 2600 : 1500 });
     }
+    dirty = true;
   }
 
-  // Shared colour field: hues drift over time and ripple across the screen.
-  function field(x, y, s, w, h) {
-    const ax = w * (0.5 + 0.35 * Math.cos(s * 0.11)), ay = h * (0.5 + 0.35 * Math.sin(s * 0.13));
-    const v = (Math.sin(Math.hypot(x - ax, y - ay) / 90 - s * 1.3) + 1) / 2;  // 0..1
-    return { hue: (s * 14 + (x / w) * 140 + (y / h) * 50 + v * 50) % 360, v };
+  // Drawn with WebGL. Each particle's glide (from, to, start, length) and its colour are
+  // worked out on the GPU every frame, so the page only uploads new targets when the time
+  // changes and a frame costs the Pi's CPU next to nothing. 60 fps while particles glide;
+  // the slow shimmer in between moves a fraction of a pixel per frame, so it's drawn at 30.
+  const VERTEX = `
+    attribute vec3 aFrom, aTo, aTime;  // from x, y, size; to x, y, size; start, length (s), phase
+    uniform vec2 uView;                // screen size in CSS pixels
+    uniform float uNow, uHue, uScale;  // seconds; hue drift; device pixels per CSS pixel
+    uniform vec3 uField;               // the colour field's centre (x, y) and wave offset
+    uniform vec2 uShimmer;
+    varying vec3 vColour;
+    varying float vR, vSize;
+    vec3 hsl(float h, float s, float l) {
+      vec3 k = mod(vec3(0.0, 8.0, 4.0) + h / 30.0, 12.0);
+      return l - s * min(l, 1.0 - l) * clamp(min(k - 3.0, 9.0 - k), -1.0, 1.0);
+    }
+    void main() {
+      float p = clamp((uNow - aTime.x) / aTime.y, 0.0, 1.0);
+      float k = p < 0.5 ? 4.0 * p * p * p : 1.0 - pow(-2.0 * p + 2.0, 3.0) / 2.0;
+      vec3 d = mix(aFrom, aTo, k);
+      float v = (sin(distance(d.xy, uField.xy) / 90.0 - uField.z) + 1.0) / 2.0;
+      float hue = mod(uHue + d.x / uView.x * 140.0 + d.y / uView.y * 50.0 + v * 50.0, 360.0);
+      vColour = hsl(hue, 0.9, 0.52 + v * 0.03);
+      // A faint shimmer around each particle's spot, and a gentle pulse.
+      vec2 at = d.xy + vec2(sin(uShimmer.x + aTime.z), cos(uShimmer.y + aTime.z)) * d.z * 0.12;
+      vR = d.z * (0.3 + 0.08 * v) * uScale;
+      vSize = ceil(vR * 2.0 + 2.0);
+      gl_PointSize = vSize;
+      gl_Position = vec4(at / uView * vec2(2.0, -2.0) + vec2(-1.0, 1.0), 0.0, 1.0);
+    }`;
+  const FRAGMENT = `
+    precision mediump float;
+    varying vec3 vColour;
+    varying float vR, vSize;
+    void main() {
+      float a = clamp(vR + 0.5 - length(gl_PointCoord - 0.5) * vSize, 0.0, 1.0);  // smooth edge
+      gl_FragColor = vec4(vColour * a, a);
+    }`;
+
+  let gpu = null, dirty = true, moveUntil = 0, timeBase = 0, checkAt = 0;
+
+  function gpuSetup(canvas) {
+    const gl = canvas.getContext("webgl", { alpha: false, antialias: false, depth: false, stencil: false,
+                                             preserveDrawingBuffer: false, powerPreference: "low-power" });
+    if (!gl) return null;
+    const shader = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      return sh;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VERTEX));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FRAGMENT));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    ["aFrom", "aTo", "aTime"].forEach((name, i) => {
+      const loc = gl.getAttribLocation(prog, name);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 36, i * 12);
+    });
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0, 0, 0, 1);
+    const u = {};
+    for (const name of ["uView", "uNow", "uHue", "uScale", "uField", "uShimmer"]) u[name] = gl.getUniformLocation(prog, name);
+    // The GPU can drop the context (e.g. its process restarted): start again on a new canvas.
+    canvas.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();
+      if (gpu && gpu.gl === gl) gpuRelease();
+    }, { once: true });
+    return { gl, u, data: new Float32Array(0) };
+  }
+
+  // Hand the GPU memory back (the canvas's picture and the particles) when the screensaver
+  // closes; a fresh canvas is made the next time it opens.
+  function gpuRelease() {
+    if (!ui) return;
+    if (gpu) {
+      const lose = gpu.gl.getExtension("WEBGL_lose_context");
+      if (lose && !gpu.gl.isContextLost()) lose.loseContext();
+      gpu = null;
+    }
+    const fresh = el("canvas", "");
+    ui.canvas.replaceWith(fresh);
+    ui.canvas = fresh;
+    dirty = true;
+  }
+
+  // The particles' glides, in seconds from timeBase (kept recent so 32-bit floats stay exact).
+  function upload(now) {
+    const { gl } = gpu;
+    timeBase = now;
+    if (gpu.data.length !== dots.length * 9) gpu.data = new Float32Array(dots.length * 9);
+    const f = gpu.data;
+    moveUntil = 0;
+    dots.forEach((d, i) => {
+      const o = i * 9, moving = d.t0 !== undefined;
+      f[o] = moving ? d.fx : d.x; f[o + 1] = moving ? d.fy : d.y; f[o + 2] = moving ? d.fs : d.s;
+      f[o + 3] = moving ? d.tx : d.x; f[o + 4] = moving ? d.ty : d.y; f[o + 5] = moving ? d.ts : d.s;
+      f[o + 6] = moving ? (d.t0 - now) / 1000 : -1; f[o + 7] = moving ? d.dur / 1000 : 1; f[o + 8] = d.phase;
+      if (moving) moveUntil = Math.max(moveUntil, d.t0 + d.dur);
+    });
+    gl.bufferData(gl.ARRAY_BUFFER, f, gl.STATIC_DRAW);
+    dirty = false;
   }
 
   function draw(t) {
@@ -796,46 +938,39 @@
       return;
     }
     rafId = requestAnimationFrame(draw);
-    // 30 fps while particles glide to a new minute; 20 is plenty for the slow shimmer.
-    if (t - lastFrame < (moving ? 33 : 50)) return;
-    lastFrame = t;
-    moving = false;
-    const c = ui.canvas, ctx = c.getContext("2d");
-    const w = innerWidth, h = innerHeight;
-    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     const now = performance.now();
-    if (!dots.length || stamp(new Date()).key !== shown || w !== shownW || h !== shownH) {
+    if (now >= moveUntil && !dirty && t - lastFrame < 30) return;  // 30 fps while nothing glides
+    lastFrame = t;
+    const w = innerWidth, h = innerHeight;
+    // A new layout when the screen size or the minute changes (not while gathering into a record).
+    if (!dots.length || !shown || w !== shownW || h !== shownH ||
+        (now >= checkAt && mode !== "to-music" && stamp(new Date()).key !== shown)) {
       retarget(now, w, h, !dots.length);
     }
-    ctx.clearRect(0, 0, w, h);
-    const s = (t - startedAt) / 1000;
-    // Hundreds of particles: group them by (rounded) colour and fill each group in one go.
-    const batches = new Map();
-    for (const d of dots) {
-      if (d.t0 !== undefined) {
-        const p = Math.min(1, Math.max(0, (now - d.t0) / d.dur));
-        if (p < 1) moving = true;
-        const k = ease(p);
-        d.x = d.fx + (d.tx - d.fx) * k;
-        d.y = d.fy + (d.ty - d.fy) * k;
-        d.s = d.fs + (d.ts - d.fs) * k;
-      }
-      const { hue, v } = field(d.x, d.y, s, w, h);
-      const key = `${Math.round(hue / 4) * 4},${Math.round(v * 4)}`;
-      let path = batches.get(key);
-      if (!path) batches.set(key, (path = new Path2D()));
-      // A faint shimmer around each particle's spot, and a gentle pulse.
-      const x = d.x + Math.sin(s * 1.6 + d.phase) * d.s * 0.12;
-      const y = d.y + Math.cos(s * 1.3 + d.phase) * d.s * 0.12;
-      const r = d.s * (0.3 + 0.08 * v);
-      path.moveTo(x + r, y);
-      path.arc(x, y, r, 0, 6.2832);
+    if (now >= checkAt) checkAt = now + 1000;  // a new minute is looked for once a second
+    if (!gpu && !(gpu = gpuSetup(ui.canvas))) {
+      ui.saver.classList.add("plain");  // no WebGL: the plain text clock instead
+      rafId = 0;
+      return;
     }
-    for (const [key, path] of batches) {
-      const [hue, v] = key.split(",").map(Number);
-      ctx.fillStyle = `hsl(${hue}, 90%, ${52 + v * 3}%)`;
-      ctx.fill(path);
+    const { gl, u } = gpu, c = ui.canvas, scale = devicePixelRatio || 1;
+    if (c.width !== Math.round(w * scale) || c.height !== Math.round(h * scale)) {
+      c.width = Math.round(w * scale);
+      c.height = Math.round(h * scale);
+      gl.viewport(0, 0, c.width, c.height);
     }
+    if (dirty) upload(now);
+    // Everything that drifts with time is worked out here in double precision, then
+    // wrapped, so the GPU's 32-bit floats stay exact however long the screensaver runs.
+    const s = (now - startedAt) / 1000, TAU = 6.283185307179586;
+    gl.uniform2f(u.uView, w, h);
+    gl.uniform1f(u.uScale, scale);
+    gl.uniform1f(u.uNow, (now - timeBase) / 1000);
+    gl.uniform1f(u.uHue, (s * 14) % 360);
+    gl.uniform3f(u.uField, w * (0.5 + 0.35 * Math.cos(s * 0.11)), h * (0.5 + 0.35 * Math.sin(s * 0.13)), (s * 1.3) % TAU);
+    gl.uniform2f(u.uShimmer, (s * 1.6) % TAU, (s * 1.3) % TAU);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.POINTS, 0, dots.length);
   }
 
   // ---- API for the controller -------------------------------------------------

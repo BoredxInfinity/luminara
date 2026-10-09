@@ -54,7 +54,9 @@ function render() {
     li.dataset.id = s.id;
     const shade = document.createElement("span");
     shade.className = "shade";
-    li.append(shade, art(s, "logo"));
+    const sweep = document.createElement("span");
+    sweep.className = "sweep";
+    li.append(shade, art(s, "logo"), sweep);
     li.addEventListener("click", () => { select(s.id); launch(); });
     // The remote's touchpad cursor focuses tiles just like the D-pad does.
     li.addEventListener("mouseenter", () => { focusArea = "tiles"; paintUpdate(); select(s.id); });
@@ -63,7 +65,90 @@ function render() {
   paint(true);
 }
 
-let glowFlip = false, glowColor = "";
+// ---- ambient glow ----------------------------------------------------------------
+// The focused service's colour glowing from two corners, under a vignette. Drawn on a
+// small canvas the GPU stretches over the screen: the glows are so soft they look the
+// same, and changing colour redraws a few thousand pixels instead of crossfading two
+// full-screen layers, which was more than the Pi's GPU could do without dropping frames.
+const ambient = $("ambient").getContext("2d", { alpha: false });
+const GLOW_MS = 1100;
+let glow = { from: null, to: null, start: 0, raf: 0, drawn: 0 };
+
+function rgb(hex) {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h;
+  const n = parseInt(full, 16);
+  return Number.isNaN(n) ? [124, 92, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// A little more saturated, as CSS's saturate(1.2) would make it.
+function saturate([r, g, b], s = 1.2) {
+  const m = [[0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s],
+             [0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s],
+             [0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s]];
+  return m.map(([a, b2, c]) => Math.min(255, Math.max(0, Math.round(a * r + b2 * g + c * b))));
+}
+
+function drawAmbient([r, g, b]) {
+  const ctx = ambient, w = ctx.canvas.width, h = ctx.canvas.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#07080c";
+  ctx.fillRect(0, 0, w, h);
+  // An elliptical glow (radii as fractions of the width and height): a circle stretched
+  // sideways by the transform, fading out at 70% of its size.
+  const blob = (cx, cy, rx, ry) => {
+    const RX = rx * w, RY = ry * h;
+    ctx.setTransform(RX / RY, 0, 0, 1, cx * w, cy * h);
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, RY * 0.7);
+    grad.addColorStop(0, `rgba(${r},${g},${b},.32)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(-cx * w * RY / RX, -cy * h, w * RY / RX, h);
+  };
+  blob(0.22, 0.22, 0.63, 0.77);
+  blob(0.92, 0.85, 0.56, 0.70);
+  // Vignette.
+  ctx.setTransform(1.2 * w / (0.9 * h), 0, 0, 1, 0.5 * w, 0.4 * h);
+  const vig = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.9 * h);
+  vig.addColorStop(0.4, "rgba(0,0,0,0)");
+  vig.addColorStop(1, "rgba(0,0,0,.65)");
+  ctx.fillStyle = vig;
+  ctx.fillRect(-0.5 * w * 0.9 * h / (1.2 * w), -0.4 * h, w * 0.9 * h / (1.2 * w), h);
+}
+
+function glowTo(hex) {
+  const to = saturate(rgb(hex));
+  if (!glow.to) {  // first paint: no fade
+    glow.to = to;
+    drawAmbient(to);
+    return;
+  }
+  const now = performance.now();
+  glow.from = glowAt(now);
+  glow.to = to;
+  glow.start = now;
+  if (!glow.raf) glow.raf = requestAnimationFrame(glowFrame);
+}
+
+const easeOut = (p) => 1 - (1 - p) ** 3;
+function glowAt(now) {
+  if (!glow.from) return glow.to;
+  const k = easeOut(Math.min(1, (now - glow.start) / GLOW_MS));
+  return glow.from.map((v, i) => Math.round(v + (glow.to[i] - v) * k));
+}
+
+// A slow colour fade looks the same redrawn 30 times a second as 60, for half the work.
+function glowFrame(now) {
+  const done = now - glow.start >= GLOW_MS;
+  if (done || now - glow.drawn >= 30) {
+    drawAmbient(glowAt(now));
+    glow.drawn = now;
+  }
+  if (!done) glow.raf = requestAnimationFrame(glowFrame);
+  else { glow.raf = 0; glow.from = null; }
+}
+
+let glowColor = "";
 function paint(quiet = false) {
   for (const li of $("tiles").children) {
     li.setAttribute("aria-selected", String(focusArea === "tiles" && li.dataset.id === selected));
@@ -72,13 +157,9 @@ function paint(quiet = false) {
   if (!s) return;
   document.documentElement.style.setProperty("--accent", s.color);
 
-  // Crossfade the ambient glow to the new colour.
+  // Fade the ambient glow to the new colour.
   if (s.color !== glowColor) {
-    const [on, off] = glowFlip ? [$("glow-a"), $("glow-b")] : [$("glow-b"), $("glow-a")];
-    on.style.setProperty("--c", s.color);
-    on.classList.add("on");
-    off.classList.remove("on");
-    glowFlip = !glowFlip;
+    glowTo(s.color);
     glowColor = s.color;
   }
 
