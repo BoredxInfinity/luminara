@@ -523,15 +523,18 @@ async def spotify_login(request: web.Request):
 async def spotify_finish(request: web.Request):
     """The address Spotify sent the phone to after login, pasted back from the phone."""
     hub = request.app[HUB]
+    pasted = str((await read_json(request)).get("url", ""))
     try:
-        user = await hub.spotify.finish(hub.http, str((await read_json(request)).get("url", "")))
+        await hub.spotify.finish(hub.http, pasted)
     except SpotifyError as exc:
+        if hub.spotify.connected and hub.spotify.used(pasted):
+            return ok(**hub.spotify.status())  # a second tap on the same address: already done
         return fail(str(exc), 400)
     except (aiohttp.ClientError, asyncio.TimeoutError):
         return fail("Couldn't reach Spotify from the TV box", 502)
     if hub.browser.saver_on:
         hub.on_saver(True)  # start showing it now if the screensaver is up
-    return ok(user=user, **hub.spotify.status())
+    return ok(**hub.spotify.status())  # status() includes the user
 
 
 @routes.post("/api/spotify/disconnect")

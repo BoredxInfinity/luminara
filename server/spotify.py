@@ -43,6 +43,7 @@ class Spotify:
         self._pending: dict[str, dict] = {}  # login state -> {verifier, client_id, at}
         self._art: dict[str, str] = {}       # album art URL -> data: URL (last few)
         self._retry_after = 0.0
+        self._done = ""  # the state of the last login finished
         try:
             self.data = json.loads(self._file.read_text())
         except (FileNotFoundError, ValueError):
@@ -89,6 +90,8 @@ class Spotify:
             raise SpotifyError("Spotify said no: " + query["error"][0].replace("_", " "))
         code, state = query.get("code", [""])[0], query.get("state", [""])[0]
         login = self._pending.pop(state, None)
+        if login:
+            self._done = state
         if not code or not login or time.time() - login["at"] > LOGIN_TTL:
             raise SpotifyError("That address is from an old or unknown login. Tap Connect again.")
         tokens = await self._token_request(http, login["client_id"], {
@@ -105,6 +108,11 @@ class Spotify:
         self._save()
         log.info("connected to Spotify as %s", self.data.get("user") or "?")
         return self.data.get("user", "")
+
+    def used(self, pasted: str) -> bool:
+        """Is this the callback address of the login that already went through?"""
+        state = parse_qs(urlsplit(pasted.strip()).query or pasted.strip().lstrip("?")).get("state", [""])[0]
+        return bool(state) and state == self._done
 
     async def _token_request(self, http: aiohttp.ClientSession, client_id: str, form: dict) -> dict:
         async with http.post(TOKEN, data={**form, "client_id": client_id},

@@ -440,3 +440,45 @@ def test_spotify_player_answer_becomes_turntable_info(tmp_path):
         return None  # 204: nothing playing
     sp._get = nothing
     assert asyncio.run(sp.now_playing(None)) is None
+
+
+def test_spotify_finish_route_replies_once_connected_and_on_a_repeated_paste(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs, urlsplit
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    import server.main as main
+    from server.spotify import Spotify
+
+    sp = Spotify(tmp_path, 8080)
+    state = parse_qs(urlsplit(sp.login_url("0123456789abcdef0123456789abcdef")).query)["state"][0]
+
+    async def fake_token(http, client_id, form):
+        return {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}
+
+    async def fake_get(http, path):
+        return {"display_name": "AravBansal"}
+
+    sp._token_request, sp._get = fake_token, fake_get
+    hub = SimpleNamespace(spotify=sp, http=None, browser=SimpleNamespace(saver_on=False), on_saver=lambda on: None)
+    app = web.Application()
+    app[main.HUB] = hub
+    pasted = f"http://127.0.0.1:8080/spotify/callback?code=C&state={state}"
+
+    async def body(request):
+        return {"url": pasted}
+
+    monkeypatch.setattr(main, "read_json", body)
+
+    async def call():
+        resp = await main.spotify_finish(make_mocked_request("POST", "/api/spotify/finish", app=app))
+        return resp.status, json.loads(resp.body)
+
+    status, data = asyncio.run(call())
+    assert status == 200 and data["connected"] and data["user"] == "AravBansal"
+    status, data = asyncio.run(call())  # tapping Finish again with the same address
+    assert status == 200 and data["connected"]

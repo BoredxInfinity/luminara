@@ -128,6 +128,11 @@ async function loadSpotify() {
 
 function spotifyError(text) { $("sp-error").textContent = text || ""; }
 
+function boxError(res, data) {
+  if (!res) return "Couldn't reach the TV box";
+  return data.error || `The TV box ran into a problem (error ${res.status}). Try again.`;
+}
+
 // Phones on plain HTTP have no clipboard API: fall back to a hidden text box.
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch { /* fall back */ }
@@ -157,7 +162,7 @@ $("sp-login").addEventListener("click", async () => {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: clientId }),
   }).catch(() => null);
   const data = res ? await res.json().catch(() => ({})) : {};
-  if (!res || !res.ok) { if (tab) tab.close(); return spotifyError(data.error || "Couldn't reach the TV box"); }
+  if (!res || !res.ok) { if (tab) tab.close(); return spotifyError(boxError(res, data)); }
   if (tab) tab.location.href = data.url;
   else location.href = data.url;  // pop-up blocked: go in this tab, then come back
 });
@@ -173,7 +178,11 @@ $("sp-finish").addEventListener("click", async () => {
   }).catch(() => null);
   $("sp-finish").disabled = false;
   const data = res ? await res.json().catch(() => ({})) : {};
-  if (!res || !res.ok) return spotifyError(data.error || "Couldn't reach the TV box");
+  if (!res || !res.ok) {
+    await loadSpotify();  // it may have connected even so
+    if (spotify.connected) return toast("Spotify connected");
+    return spotifyError(boxError(res, data));
+  }
   spotify = data;
   $("sp-paste").value = "";
   paintSpotify();
