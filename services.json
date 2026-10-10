@@ -55,5 +55,18 @@
              "bg": "#fff", "size": "70%"},
     "user_agent": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.0 TV Safari/537.36",
     "keys": {"playpause": "mediaplaypause", "back": "escape"}
+  },
+  {
+    "id": "f1tv",
+    "name": "F1 TV",
+    "tagline": "Every Formula 1 session, live and on demand",
+    "url": "https://f1tv.formula1.com/",
+    "match": ["formula1.com"],
+    "dpad": true,
+    "glyph": "F1",
+    "color": "#e10600",
+    "tile": "radial-gradient(120% 140% at 50% 0%, #3a0a08 0%, #15151e 70%)",
+    "logo": {"url": "https://upload.wikimedia.org/wikipedia/commons/3/33/F1.svg"},
+    "icon": {"url": "https://upload.wikimedia.org/wikipedia/commons/3/33/F1.svg", "bg": "#15151e", "size": "72%"}
   }
 ]
