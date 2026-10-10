@@ -17,6 +17,8 @@ BY_ID = {s.id: s for s in SERVICES}
     ("https://www.hotstar.com/in/home", "jiohotstar"),
     ("https://www.amazon.in/ap/signin", "prime"),
     ("https://www.youtube.com/tv#/watch", "youtube"),
+    ("https://f1tv.formula1.com/detail/1000005/2025-race", "f1tv"),
+    ("https://account.formula1.com/#/en/login", "f1tv"),  # F1 TV's sign-in
     ("https://open.spotify.com/", None),  # no longer an app
     ("https://notnetflix.com/", None),
     ("http://127.0.0.1:8080/tv", None),
@@ -28,7 +30,7 @@ def test_service_for_url(url, expected):
 
 
 def test_services_have_unique_ids_and_urls():
-    assert len(BY_ID) == len(SERVICES) == 4
+    assert len(BY_ID) == len(SERVICES) == 5
     assert "spotify" not in BY_ID  # music shows on the screensaver instead (server/spotify.py)
     assert all(s.url.startswith("https://") for s in SERVICES)
 
@@ -146,6 +148,7 @@ def test_boot_volume_setting_is_clamped():
 def test_dpad_services():
     by_id = {s.id: s for s in SERVICES}
     assert by_id["netflix"].dpad and by_id["netflix"].dpad_cards is None
+    assert by_id["f1tv"].dpad and by_id["f1tv"].dpad_cards is None
     assert by_id["jiohotstar"].dpad and by_id["jiohotstar"].dpad_cards
     assert not by_id["youtube"].dpad  # YouTube's TV interface handles arrows itself
 
