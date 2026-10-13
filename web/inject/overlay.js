@@ -43,17 +43,6 @@
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
   } catch { /* very old engine: leave them */ }
 
-  // Some players (e.g. Spotify's web player) play through an <audio> that's never put in the page, where
-  // querySelectorAll can't see it. We run before the page's scripts, so remember every
-  // element that starts playing.
-  // Held weakly: a player the page throws away can still be freed.
-  const started = new Set(), seen = new WeakSet();
-  const realPlay = HTMLMediaElement.prototype.play;
-  HTMLMediaElement.prototype.play = function (...args) {
-    if (!seen.has(this)) { seen.add(this); started.add(new WeakRef(this)); }
-    return realPlay.apply(this, args);
-  };
-
   const CSS = `
     :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; }
     .layer { position: fixed; inset: 0; font: 600 22px/1.2 "Noto Sans Display","Noto Sans",system-ui,sans-serif; color: #fff; }
@@ -303,69 +292,26 @@
     timers.dot = setTimeout(() => (dot.style.opacity = "0"), 3000);
   }, { capture: true, passive: true });
 
-  function videoPlaying() {
-    const minArea = innerWidth * innerHeight * 0.15;
-    for (const v of document.querySelectorAll("video")) {
-      // Muted autoplaying trailers (site menus) aren't being watched; the screensaver pauses them.
-      if (v.paused || v.ended || v.muted || v.readyState < 3 || !v.videoWidth) continue;
-      const r = v.getBoundingClientRect();
-      if (r.width * r.height >= minArea) return true;
-    }
-    return false;
-  }
-
   // What's playing on your Spotify account, sent by the box while the screensaver is up
-  // (server/spotify.py). It wins over anything the page itself reports.
+  // (server/spotify.py). It's the only thing that puts a record on: music or video playing
+  // in a page on the TV never does.
   let remoteMusic = null;
+  const nowPlaying = () => remoteMusic;
 
-  function nowPlaying() {
-    if (remoteMusic) return remoteMusic;
-    const ms = navigator.mediaSession;
-    const md = ms && ms.metadata;
-    if (!md || !md.title) return null;
-    const live = [];
-    for (const ref of started) {
-      const m = ref.deref();
-      if (m && (m.isConnected || m.currentSrc)) live.push(m);
-      else started.delete(ref);  // discarded players
-    }
-    // What you can hear decides, not the site's own playbackState: a muted trailer under a
-    // menu (which the screensaver pauses) is no reason to put a record on.
-    const media = [...new Set([...document.querySelectorAll("audio, video"), ...live])].filter((m) => !m.muted);
-    const playing = media.some((m) => !m.paused && !m.ended);
-    const paused = media.some((m) => m.paused && !m.ended && m.currentTime > 0);
-    if (!playing && !paused) return null;
-    const art = [...(md.artwork || [])].sort((a, b) => parseInt(b.sizes) - parseInt(a.sizes))[0];
-    return { title: md.title, artist: md.artist, album: md.album, art: art && art.src, playing,
-             source: playing ? "Now playing" : "Paused" };
-  }
+  // The screensaver belongs to the home screen: it never comes up inside an app.
+  const onHome = () => !!cfg.home && location.href.startsWith(cfg.home);
 
   let beat = 0;
   setInterval(() => {
     // While it's up, keep telling the box (every 15 s), so it picks Spotify checks back up
     // if it ever lost track, e.g. after its connection to Chromium blipped.
     if (saverOn && ++beat % 3 === 0) signal({ saver: true });
-    if (saverOn || !cfg.saverMinutes || document.visibilityState !== "visible") return;
+    if (saverOn || !cfg.saverMinutes || !onHome() || document.visibilityState !== "visible") return;
     if (Date.now() - lastInput < cfg.saverMinutes * 60000) return;
-    // Never over a video someone is watching. (A playing video also counts as "now playing"
-    // music to the page, so that can't be what decides; music without a picture still
-    // brings the screensaver up, as the turntable.)
-    if (!videoPlaying()) startSaver();
+    if (onHome()) startSaver();
   }, 5000);
 
   let rafId = 0, startedAt = 0, metaTimer = 0, lastFrame = 0;
-
-  // Muted autoplaying trailers (Netflix, Prime, JioHotstar menus) keep decoding video
-  // under the screensaver for nobody: pause them while it's up.
-  let pausedUnder = [];
-  function pauseTrailers() {
-    pausedUnder = [...document.querySelectorAll("video")].filter((v) => v.muted && !v.paused);
-    for (const v of pausedUnder) v.pause();
-  }
-  function resumeTrailers() {
-    for (const v of pausedUnder) if (v.isConnected && v.paused) v.play().catch(() => {});
-    pausedUnder = [];
-  }
 
   // Tell the box, so it checks Spotify only while the screensaver is up.
   function signal(msg) {
@@ -381,7 +327,6 @@
     session++;
     u.saver.classList.remove("music", "closing", "swapping");
     signal({ saver: true });
-    pauseTrailers();
     startedAt = performance.now();
     u.saver.classList.remove("leaving");
     u.clock.style.display = cfg.saverClock ? "" : "none";
@@ -399,7 +344,6 @@
     session++;
     remoteMusic = null;
     signal({ saver: false });
-    resumeTrailers();
     clearInterval(metaTimer);
     u.saver.classList.add("leaving");
     u.saver.classList.remove("on");
@@ -1008,8 +952,8 @@
       remoteMusic = m && m.title ? m : null;
       if (saverOn) refreshSaver();
     },
-    saver(on) {  // for testing from the console / CDP
-      if (on && !saverOn) startSaver();
+    saver(on) {  // the remote's Screensaver button (home screen only)
+      if (on && !saverOn && onHome()) startSaver();
       if (!on && saverOn) stopSaver();
     },
   };

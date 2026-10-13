@@ -157,12 +157,12 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - A count of connected remotes.
   - An update banner when a new version is on GitHub.
 - **Screensaver** (after 5 minutes by default; change it in Settings):
-  - It runs on the home screen and on streaming-site menus, but never over a playing video.
+  - It only runs on the home screen, never inside an app (the remote's Screensaver button too).
   - The time and date are drawn in colour-shifting particles. When the minute changes they glide into the new digits; none appear or vanish.
-  - It's drawn by the GPU (WebGL): 60 frames a second while the particles move and 30 while they only shimmer (a fraction of a pixel per frame, so it looks the same), at under half of one CPU core. Muted trailers playing behind it are paused until you're back, and the GPU memory it used is handed back when it closes.
-  - The **Screensaver** button on the remote starts it right away (the turntable if music is playing).
+  - It's drawn by the GPU (WebGL): 60 frames a second while the particles move and 30 while they only shimmer (a fraction of a pixel per frame, so it looks the same), at under half of one CPU core. The GPU memory it used is handed back when it closes.
+  - The **Screensaver** button on the remote starts it right away on the home screen (the turntable if Spotify is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
-  - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), or in the page on the TV, it shows a turntable with the album art spinning on the record, plus the song, artist and album, on black, with the record player glowing in the album's average colour. See [Spotify on the screensaver](#spotify-on-the-screensaver).
+  - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), it shows a turntable with the album art spinning on the record, plus the song, artist and album, on black, with the record player glowing in the album's average colour. See [Spotify on the screensaver](#spotify-on-the-screensaver).
 - **D-pad on Netflix, Prime Video and JioHotstar:** these are mouse websites (only YouTube has a real TV interface in a browser), so the arrows move a white focus ring between titles, buttons and menus, and OK clicks.
   - Right at the end of a row pages the row, like a TV app. Up/down go row by row.
   - In a title's pop-up the ring stays inside it; Back closes it and the ring returns to the title.

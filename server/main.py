@@ -135,7 +135,8 @@ class Hub:
         """The settings overlay.js needs inside every page."""
         p = self.prefs
         dpad = [{"hosts": list(s.match), "cards": s.dpad_cards} for s in self.services if s.dpad]
-        return {"preferH264": p["prefer_h264"], "saverMinutes": p["saver_minutes"], "saverClock": p["saver_clock"], "dpad": dpad}
+        return {"preferH264": p["prefer_h264"], "saverMinutes": p["saver_minutes"], "saverClock": p["saver_clock"], "dpad": dpad,
+                "home": self.settings.launcher_url}  # the screensaver only runs there
 
     def write_chromium_env(self) -> None:
         """deploy/kiosk.sh sources this when Chromium starts."""
