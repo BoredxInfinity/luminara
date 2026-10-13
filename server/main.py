@@ -670,11 +670,22 @@ async def restart_display(request: web.Request):
 
 @routes.post("/api/saver/start")
 async def saver_start(request: web.Request):
-    """The remote's Screensaver button (and the Settings preview). overlay.js shows the
-    turntable when music is playing, the particle clock otherwise."""
-    await request.app[HUB].browser.send(
-        "Runtime.evaluate", {"expression": "window.__tvbox && window.__tvbox.saver(true)"}, timeout=3)
-    return ok()
+    """The remote's Screensaver button (and the Settings preview). The screensaver only
+    runs on the home screen, so from an app this goes home first. overlay.js shows the
+    turntable when Spotify is playing, the particle clock otherwise."""
+    browser = request.app[HUB].browser
+    if browser.state.get("view") != "launcher":
+        await browser.home()
+    # The home screen may still be loading: try until its overlay is there to answer.
+    for _ in range(40):
+        res = await browser.send("Runtime.evaluate", {"returnByValue": True, "expression":
+                                 "!!(window.__tvbox && location.href.startsWith(window.__tvboxConfig.home)"
+                                 " && document.readyState !== 'loading' && (window.__tvbox.saver(true), true))"},
+                                 timeout=3)
+        if res.get("result", {}).get("value"):
+            return ok()
+        await asyncio.sleep(0.25)
+    return fail("the home screen didn't load in time", 503)
 
 
 @routes.post("/api/pin/reset")

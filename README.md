@@ -160,7 +160,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - It only runs on the home screen, never inside an app (the remote's Screensaver button too).
   - The time and date are drawn in colour-shifting particles. When the minute changes they glide into the new digits; none appear or vanish.
   - It's drawn by the GPU (WebGL): 60 frames a second while the particles move and 30 while they only shimmer (a fraction of a pixel per frame, so it looks the same), at under half of one CPU core. The GPU memory it used is handed back when it closes.
-  - The **Screensaver** button on the remote starts it right away on the home screen (the turntable if Spotify is playing).
+  - The **Screensaver** button on the remote goes to the home screen if needed and starts it right away (the turntable if Spotify is playing).
   - It fades in gently over a few seconds. The first button press only wakes it; nothing else happens.
   - **While music plays** on your Spotify account, on any device (once connected in Settings → Spotify), it shows a turntable with the album art spinning on the record, plus the song, artist and album, on black, with the record player glowing in the album's average colour. See [Spotify on the screensaver](#spotify-on-the-screensaver).
 - **D-pad on Netflix, Prime Video and JioHotstar:** these are mouse websites (only YouTube has a real TV interface in a browser), so the arrows move a white focus ring between titles, buttons and menus, and OK clicks.
