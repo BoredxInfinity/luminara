@@ -984,3 +984,9 @@ def test_a_wifi_job_reports_how_it_went_and_only_runs_one_at_a_time(monkeypatch)
 
     asyncio.run(run())
     assert finished == ["failed", "failed"]
+
+
+def test_wifi_route_hook_only_touches_the_rule_on_the_events_that_change_the_address():
+    text = (ROOT / "deploy" / "tvbox-wifi-routes").read_text()
+    # A bug here wiped the rule whenever an IPv6 address arrived just after Wi-Fi came up.
+    assert text.index('up|dhcp4-change|reapply|down) ;;') < text.index('ip rule del')
