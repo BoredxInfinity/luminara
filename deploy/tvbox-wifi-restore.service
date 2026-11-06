@@ -1,0 +1,12 @@
+[Unit]
+Description=TV box: bring back the saved Wi-Fi network if it was lost
+After=NetworkManager.service
+Wants=NetworkManager.service
+RequiresMountsFor=/boot/firmware
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tvbox-wifi restore
+
+[Install]
+WantedBy=multi-user.target

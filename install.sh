@@ -31,7 +31,7 @@ as_user test -r "$APP_DIR/server/main.py" || { echo "$TV_USER can't read $APP_DI
 say "Installing packages"
 apt-get update
 apt-get install -y --no-install-recommends \
-  git curl python3-venv iw \
+  git curl python3-venv python3-yaml iw \
   cage \
   pipewire pipewire-pulse wireplumber \
   libwidevinecdm0 \
@@ -55,7 +55,8 @@ SUDOERS=/etc/sudoers.d/tvbox
 cat > "$SUDOERS.tmp" <<EOF
 $TV_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, \\
   /usr/bin/systemctl restart tvbox-server, /usr/bin/systemctl restart tvbox-kiosk, \\
-  /usr/bin/systemctl start --no-block tvbox-update.service
+  /usr/bin/systemctl start --no-block tvbox-update.service, \\
+  /usr/local/sbin/tvbox-wifi set
 EOF
 chmod 0440 "$SUDOERS.tmp"
 visudo -cf "$SUDOERS.tmp" >/dev/null && mv "$SUDOERS.tmp" "$SUDOERS"
@@ -67,13 +68,13 @@ mkdir -p /etc/chromium/policies/managed
 ln -sf "$APP_DIR/deploy/chromium-policy.json" /etc/chromium/policies/managed/tvbox.json
 
 say "systemd services"
-for unit in tvbox-server.service tvbox-kiosk.service tvbox-update.service; do
+for unit in tvbox-server.service tvbox-kiosk.service tvbox-update.service tvbox-wifi-restore.service; do
   sed -e "s|@USER@|$TV_USER|g" -e "s|@UID@|$TV_UID|g" -e "s|@APP_DIR@|$APP_DIR|g" \
     "$APP_DIR/deploy/$unit" > "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 systemctl disable getty@tty1.service >/dev/null 2>&1 || true
-systemctl enable tvbox-server.service tvbox-kiosk.service
+systemctl enable tvbox-server.service tvbox-kiosk.service tvbox-wifi-restore.service
 
 say "Swap"
 if swapon --show=NAME --noheadings | grep -q zram; then
@@ -83,6 +84,11 @@ else
   printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\n' > /etc/systemd/zram-generator.conf
   echo "zram swap configured (active after reboot)"
 fi
+
+say "Wi-Fi that survives power cuts"
+# A copy owned by root, not the clone: sudo runs it for the TV user without a password.
+install -m 0755 -o root -g root "$APP_DIR/deploy/tvbox_wifi.py" /usr/local/sbin/tvbox-wifi
+systemctl start tvbox-wifi-restore.service || true  # also runs at every boot
 
 say "Wi-Fi without power saving"
 # With power saving on, the Wi-Fi chip naps between packets: remote presses (and mirror and

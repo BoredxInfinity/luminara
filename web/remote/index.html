@@ -153,7 +153,7 @@
         <h3>Screensaver</h3>
         <div class="field"><span>Start after</span><div id="set-saver" class="seg"></div></div>
         <label class="switch-row"><span>Show the date<small>The time is always drawn by the dots.</small></span><input type="checkbox" id="set-saver-clock" class="switch"></label>
-        <p class="note">Never covers a playing video. While music plays, it shows the album on a turntable.</p>
+        <p class="note">Only on the home screen. While Spotify plays, it shows the album on a turntable.</p>
         <button id="set-saver-preview" class="pill small">Preview on the TV</button>
       </section>
       <section>
@@ -187,6 +187,21 @@
           </ol>
           <p id="sp-error" class="error" role="alert"></p>
         </div>
+      </section>
+      <section>
+        <h3>Wi-Fi</h3>
+        <p id="wifi-now" class="note"></p>
+        <div id="wifi-form" class="stack-tight">
+          <input id="wifi-ssid" class="field-input" placeholder="Network name" list="wifi-networks" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" aria-label="Wi-Fi network name">
+          <datalist id="wifi-networks"></datalist>
+          <span class="copy-row">
+            <input id="wifi-password" class="field-input" type="password" placeholder="Password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="64" aria-label="Wi-Fi password">
+            <button id="wifi-show" class="pill small" type="button">Show</button>
+          </span>
+          <div class="row"><button id="wifi-join" class="pill small accent">Connect</button></div>
+          <p class="note">The box tries the new network first and goes back to the old one if that doesn't work. If it moves to a different network, join this phone to that network too.</p>
+        </div>
+        <p id="wifi-error" class="error" role="alert"></p>
       </section>
       <section>
         <h3>Sound</h3>

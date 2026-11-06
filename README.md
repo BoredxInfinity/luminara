@@ -175,6 +175,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
   - Stop from the remote, from the browser's own "Stop sharing" bar, or by pressing Home/Back on any remote.
   - Phones and tablets can't share their screen from a web page, so the button only appears on computers.
 - **No internet:** if the box can't reach the internet for about half a minute, the TV shows only a "Can't connect to the internet" screen, with the state of Wi-Fi and Ethernet, instead of the home screen, an app or the screensaver. It goes home by itself as soon as the connection is back. Screen sharing isn't interrupted, since it only needs the home network.
+- **Wi-Fi that looks after itself:** if a power cut wipes the saved network, the box brings it back at the next boot from a copy on its boot partition. Change the network in **Settings → Wi-Fi**: the box tries the new one first and goes back to the old one if that fails.
 - **No scrollbars** anywhere on the TV (scrolling still works).
 - **Smooth on a Pi:** animations stick to what the GPU does cheaply (moving and fading layers). The home screen's background glow is drawn small and stretched rather than crossfading full-screen layers, a D-pad press does only a few milliseconds of work, and Chromium runs without Raspberry Pi OS's desktop flags (one of them made every page keep an accessibility tree up to date).
 - **Runs around the clock:**
@@ -210,6 +211,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
 | Apps | Show or hide each app on the TV and remote |
 | Screensaver | Off / 1–30 minutes, show the time, preview it on the TV |
 | Spotify | Connect your account, disconnect |
+| Wi-Fi | Which network the box is on; join another by name and password |
 | Sound | Volume when the box starts (or leave it as it was) |
 | Performance | Smooth video (H.264), Lite browser (applies after **Restart TV display**) |
 | Updates | Check automatically, Check now, Install |
@@ -293,7 +295,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 - **Sign out of every streaming service:** run `sudo systemctl stop tvbox-kiosk && rm -rf ~/.config/tvbox-chromium && sudo systemctl start tvbox-kiosk`.
 - **Uninstall:**
   ```bash
-  sudo systemctl disable --now tvbox-kiosk tvbox-server && sudo rm /etc/systemd/system/tvbox-*.service /etc/sudoers.d/tvbox /etc/pam.d/tvbox-kiosk /etc/chromium/policies/managed/tvbox.json && sudo systemctl enable getty@tty1
+  sudo systemctl disable --now tvbox-kiosk tvbox-server && sudo rm /usr/local/sbin/tvbox-wifi /etc/systemd/system/tvbox-*.service /etc/sudoers.d/tvbox /etc/pam.d/tvbox-kiosk /etc/chromium/policies/managed/tvbox.json && sudo systemctl enable getty@tty1
   ```
 
 ## Security

@@ -837,3 +837,150 @@ def test_without_internet_the_tv_only_shows_the_no_internet_screen(tmp_path):
         await asyncio.gather(*b._tasks, return_exceptions=True)
 
     asyncio.run(run())
+
+
+def _wifi_helper():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("tvbox_wifi", ROOT / "deploy" / "tvbox_wifi.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_wifi_details_are_checked():
+    w = _wifi_helper()
+    assert w.problem_with("Home", "correct horse") is None
+    assert w.problem_with("Café", "") is None                      # an open network
+    assert w.problem_with("Home", "f" * 64) is None                 # a derived key: 64 hex digits
+    assert w.problem_with("Home", "z" * 64)                         # anything else that long isn't
+    assert w.problem_with("", "correct horse")
+    assert w.problem_with("x" * 33, "correct horse")
+    assert w.problem_with("Home", "short")
+    assert w.problem_with("Home", "pässwörd123")
+
+
+def test_wifi_profile_stores_the_derived_key_and_any_network_name():
+    w = _wifi_helper()
+    # The test vector from the WPA standard (IEEE 802.11i, annex H).
+    assert w.derived_key("IEEE", "password") == "f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e"
+    text = w.keyfile("id-1", "A;b c", "password")
+    assert "ssid=65;59;98;32;99;" in text and "key-mgmt=wpa-psk" in text
+    assert "password" not in text.replace("key-mgmt", "")          # never the password itself
+    assert "autoconnect=true" in text and "hidden" not in text
+    assert "wifi-security" not in w.keyfile("id-2", "Cafe", "")     # open network
+    sae = w.keyfile("id-3", "New", "pass word\\1", sae=True, hidden=True, autoconnect=False)
+    assert "key-mgmt=sae" in sae and "psk=pass\\sword\\\\1" in sae and "hidden=true" in sae and "autoconnect=false" in sae
+
+
+def test_wifi_scan_results_are_parsed():
+    w = _wifi_helper()
+    scan = w.parse_scan("Home:WPA2\n:WPA2\nA\\:B:WPA2 WPA3\nNew:SAE\nCafe:\n")
+    assert scan == {"Home": "WPA2", "A:B": "WPA2 WPA3", "New": "SAE", "Cafe": ""}
+    assert w.sae_only("SAE") and not w.sae_only("WPA2 SAE")
+
+
+def test_wifi_boot_copy_round_trip_keeps_the_rest_and_never_the_password(tmp_path):
+    w = _wifi_helper()
+    path = tmp_path / "network-config"
+    path.write_text('network:\n  version: 2\n  ethernets:\n    eth0:\n      dhcp4: true\n  wifis:\n    wlan0:\n'
+                    '      dhcp4: true\n      regulatory-domain: "IN"\n      access-points:\n        "Old":\n          password: "abc12345"\n')
+    assert w.read_boot_copy(path) == ("Old", "abc12345")
+    text = w.updated_boot_copy(path.read_text(), "New: net", "my secret pw")
+    path.write_text(text)
+    assert "my secret pw" not in text and "Old" not in text
+    assert "eth0" in text and "regulatory-domain" in text
+    assert w.read_boot_copy(path) == ("New: net", w.derived_key("New: net", "my secret pw"))
+    assert w.read_boot_copy(tmp_path / "missing") is None
+    assert w.updated_boot_copy("", "Cafe", "")  # no file yet
+
+
+def test_restoring_wifi_leaves_a_saved_network_alone_and_brings_back_a_lost_one(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    w = _wifi_helper()
+    calls, saved = [], ["uuid-1"]
+
+    def fake_nmcli(*args, timeout=30):
+        calls.append(args)
+        return SimpleNamespace(stdout="running\n" if "RUNNING" in args else "", stderr="", returncode=0)
+
+    monkeypatch.setattr(w, "nmcli", fake_nmcli)
+    monkeypatch.setattr(w, "wifi_profiles", lambda: saved)
+    monkeypatch.setattr(w, "CONNECTIONS", tmp_path)
+    copy = tmp_path / "network-config"
+    copy.write_text('network:\n  wifis:\n    wlan0:\n      access-points:\n        "Home":\n          password: "' + "ab" * 32 + '"\n')
+    monkeypatch.setattr(w, "BOOT_COPIES", (copy,))
+    assert "nothing to restore" in w.restore() and not list(tmp_path.glob("*.nmconnection"))
+    saved.clear()
+    assert "restored" in w.restore()
+    [profile] = tmp_path.glob("*.nmconnection")
+    assert "psk=" + "ab" * 32 in profile.read_text() and "autoconnect=true" in profile.read_text()
+    assert profile.stat().st_mode & 0o077 == 0                      # only root can read it
+
+
+def test_a_failed_join_removes_the_new_network_and_goes_back_to_the_old_one(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    w = _wifi_helper()
+    calls = []
+
+    def fake_nmcli(*args, timeout=30):
+        calls.append(args)
+        if "up" in args:
+            return SimpleNamespace(stdout="", stderr="Error: Secrets were required, but not provided.", returncode=4)
+        if "DEVICE,TYPE" in args:
+            return SimpleNamespace(stdout="eth0:ethernet\nwlan0:wifi\n", stderr="", returncode=0)
+        if "SSID,SECURITY" in args:
+            return SimpleNamespace(stdout="Home:WPA2\n", stderr="", returncode=0)
+        return SimpleNamespace(stdout="old-uuid:802-11-wireless\n", stderr="", returncode=0)
+
+    monkeypatch.setattr(w, "nmcli", fake_nmcli)
+    monkeypatch.setattr(w, "CONNECTIONS", tmp_path)
+    copy = tmp_path / "network-config"
+    copy.write_text("unchanged")
+    monkeypatch.setattr(w, "BOOT_COPIES", (copy,))
+    result = w.set_network({"ssid": "Home", "password": "wrong password"})
+    assert result["ok"] is False and "password was wrong" in result["error"]
+    assert not list(tmp_path.glob("*.nmconnection")) and copy.read_text() == "unchanged"
+    assert ("--wait", "30", "device", "connect", "wlan0") in calls
+    assert not any(c[:2] == ("connection", "delete") and "old-uuid" in c for c in calls)
+    assert "wrong password" not in repr(calls)                      # never on a command line
+
+
+def test_a_wifi_job_reports_how_it_went_and_only_runs_one_at_a_time(monkeypatch):
+    import asyncio
+
+    from server.wifi import Wifi
+
+    w = Wifi()
+    finished = []
+
+    async def on_done(job):
+        finished.append(job["state"])
+
+    async def run():
+        gate = asyncio.Event()
+
+        async def helper(ssid, password):
+            await gate.wait()
+            return {"ok": False, "error": "Couldn't join Home: the password was wrong."}
+
+        w._run_helper = helper
+        assert w.start("Home", "wrong password", on_done)
+        assert not w.start("Other", "another password", on_done)
+        assert w.job == {"state": "joining", "ssid": "Home", "error": ""}
+        gate.set()
+        await w._task
+        assert w.job["state"] == "failed" and "password was wrong" in w.job["error"]
+        assert "wrong password" not in repr(w.job)
+
+        async def broken(ssid, password):
+            raise RuntimeError("sudo went wrong")
+
+        w._run_helper = broken
+        assert w.start("Home", "x" * 8, on_done)
+        await w._task
+        assert w.job["state"] == "failed"
+
+    asyncio.run(run())
+    assert finished == ["failed", "failed"]

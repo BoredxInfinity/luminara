@@ -30,6 +30,7 @@ from .spotify import POLL_SECONDS, Spotify, SpotifyError
 from .system import System, health, kiosk_browser, restart_kiosk_browser, system_info, throttle_problems
 from .tls import Certificate, ensure_certificate
 from .updater import Updater
+from .wifi import Wifi
 
 log = logging.getLogger("tvbox")
 
@@ -63,6 +64,7 @@ class Hub:
         self.cast = Cast(self.browser)
         self.spotify = Spotify(settings.data_dir, settings.port)
         self.connectivity = Connectivity(settings.connectivity_probes)
+        self.wifi = Wifi()
         self._spotify_watch: asyncio.Task | None = None
         self.browser.on_saver = self.on_saver
         self.tls: Certificate | None = None  # set by main() when mkcert made a certificate
@@ -658,6 +660,33 @@ async def spotify_callback(request: web.Request):
     except (SpotifyError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
         text = f"Couldn't connect Spotify: {exc}"
     return web.Response(text=text, content_type="text/plain")
+
+
+@routes.get("/api/wifi")
+async def wifi_status(request: web.Request):
+    return web.json_response(await request.app[HUB].wifi.status())
+
+
+@routes.post("/api/wifi")
+async def wifi_join(request: web.Request):
+    """Join a network. It runs in the background, since it can cut off the phone asking;
+    GET /api/wifi says how it's going."""
+    hub = request.app[HUB]
+    data = await read_json(request)
+    ssid, password = data.get("ssid"), data.get("password", "")
+    if not hub.wifi.available:
+        return fail("Wi-Fi can only be set on the TV box itself", 400)
+    if not isinstance(ssid, str) or not ssid.strip() or not isinstance(password, str) or len(password) > MAX_TEXT:
+        return fail("Enter the network name and password", 400)
+
+    async def done(job: dict) -> None:
+        text = f"Connected to {job['ssid']}" if job["state"] == "joined" else job["error"]
+        hub.osd(kind="toast", icon="info", text=text)
+
+    if not hub.wifi.start(ssid, password, done):
+        return fail("Already joining a network; give it a moment", 409)
+    hub.osd(kind="toast", icon="info", text=f"Joining {ssid}…")
+    return ok(job=hub.wifi.job)
 
 
 @routes.get("/api/system")

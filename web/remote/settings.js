@@ -144,6 +144,55 @@ async function copyText(text) {
   return ok;
 }
 
+// ---- Wi-Fi -----------------------------------------------------------------------
+
+let wifiPoll = 0;
+
+function paintWifi(wifi) {
+  const joining = wifi.job?.state === "joining";
+  $("wifi-form").hidden = !wifi.available;
+  $("wifi-join").disabled = joining;
+  $("wifi-now").textContent = !wifi.available ? "Wi-Fi can only be set on the TV box itself."
+    : joining ? `Joining ${wifi.job.ssid}… this can take up to a minute.`
+    : wifi.ssid ? `Connected to ${wifi.ssid}` : "Not connected to Wi-Fi";
+  $("wifi-error").textContent = wifi.job?.state === "failed" ? wifi.job.error : "";
+  $("wifi-networks").replaceChildren(...(wifi.networks || []).map((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    return option;
+  }));
+}
+
+// While it's joining, this phone may lose the box for a while: keep asking.
+async function loadWifi() {
+  clearTimeout(wifiPoll);
+  const res = await fetch("/api/wifi").catch(() => null);
+  const wifi = res && res.ok ? await res.json().catch(() => null) : null;
+  if (wifi) paintWifi(wifi);
+  if (sheet.open && (!wifi || wifi.job?.state === "joining")) wifiPoll = setTimeout(loadWifi, 2000);
+}
+
+$("wifi-show").addEventListener("click", () => {
+  const field = $("wifi-password");
+  field.type = field.type === "password" ? "text" : "password";
+  $("wifi-show").textContent = field.type === "password" ? "Show" : "Hide";
+});
+
+$("wifi-join").addEventListener("click", async () => {
+  buzz();
+  const ssid = $("wifi-ssid").value;
+  $("wifi-error").textContent = "";
+  if (!ssid.trim()) { $("wifi-error").textContent = "Enter the network name."; return; }
+  const res = await fetch("/api/wifi", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ssid, password: $("wifi-password").value }),
+  }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (!res || !res.ok) { $("wifi-error").textContent = boxError(res, data); return; }
+  $("wifi-password").value = "";
+  loadWifi();
+});
+
 $("sp-copy").addEventListener("click", async () => {
   buzz();
   toast((await copyText(spotify.redirect_uri)) ? "Copied" : "Press and hold the address to copy it");
@@ -205,6 +254,7 @@ async function openSettings() {
   sheet.showModal();
   paintSettings();
   loadSpotify();
+  loadWifi();
   loadAbout();
   clearInterval(aboutTimer);  // opened twice in a row: still one timer
   aboutTimer = setInterval(loadAbout, 5000);  // live memory / temperature
@@ -212,7 +262,11 @@ async function openSettings() {
 
 $("settings-btn").addEventListener("click", openSettings);
 $("settings-close").addEventListener("click", () => sheet.close());
-sheet.addEventListener("close", () => clearInterval(aboutTimer));
+sheet.addEventListener("close", () => {
+  clearInterval(aboutTimer);
+  clearTimeout(wifiPoll);
+  $("wifi-password").value = "";
+});
 
 $("set-saver-clock").addEventListener("change", (e) => saveSetting({ saver_clock: e.target.checked }));
 $("set-h264").addEventListener("change", (e) => saveSetting({ prefer_h264: e.target.checked }));
