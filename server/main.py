@@ -24,6 +24,7 @@ from .config import ROOT, WEB_DIR, Settings, load_services, load_settings
 from .cast import Cast
 from .logos import Logos
 from .mirror import Mirror
+from .network import Connectivity, interfaces
 from .settings import NEEDS_DISPLAY_RESTART, SAVER_CHOICES, VOLUME_CHOICES, UserSettings
 from .spotify import POLL_SECONDS, Spotify, SpotifyError
 from .system import System, health, kiosk_browser, restart_kiosk_browser, system_info, throttle_problems
@@ -61,6 +62,7 @@ class Hub:
         self.mirror = Mirror(self.browser)
         self.cast = Cast(self.browser)
         self.spotify = Spotify(settings.data_dir, settings.port)
+        self.connectivity = Connectivity(settings.connectivity_probes)
         self._spotify_watch: asyncio.Task | None = None
         self.browser.on_saver = self.on_saver
         self.tls: Certificate | None = None  # set by main() when mkcert made a certificate
@@ -436,6 +438,16 @@ async def cast_page(request: web.Request):
     return web.FileResponse(WEB_DIR / "cast" / "index.html")
 
 
+@routes.get("/offline")
+async def offline_page(request: web.Request):
+    return web.FileResponse(WEB_DIR / "offline" / "index.html")
+
+
+@routes.get("/api/network")
+async def network_status(request: web.Request):
+    return web.json_response({"online": request.app[HUB].connectivity.online, **interfaces()})
+
+
 @routes.get("/ca.crt")
 async def ca_certificate(request: web.Request):
     """The box's certificate authority (public part only), for devices to trust once."""
@@ -674,6 +686,8 @@ async def saver_start(request: web.Request):
     runs on the home screen, so from an app this goes home first. overlay.js shows the
     turntable when Spotify is playing, the particle clock otherwise."""
     browser = request.app[HUB].browser
+    if browser.no_internet:
+        return fail("The TV box isn't connected to the internet", 503)
     if browser.state.get("view") != "launcher":
         await browser.home()
     # The home screen may still be loading: try until its overlay is there to answer.
@@ -855,6 +869,7 @@ async def _startup(app: web.Application) -> None:
         asyncio.create_task(hub.announce_restart()),
         asyncio.create_task(hub.updater.run_periodic(lambda: hub.prefs["auto_update_check"], hub.on_update_status)),
         asyncio.create_task(hub.maintain()),
+        asyncio.create_task(hub.connectivity.run(hub.http, hub.browser.apply_internet)),
     ]
 
 
@@ -890,6 +905,7 @@ def create_app(settings: Settings | None = None) -> web.Application:
     app.router.add_static("/tv/", WEB_DIR / "tv")
     app.router.add_static("/remote/", WEB_DIR / "remote")
     app.router.add_static("/cast/", WEB_DIR / "cast")
+    app.router.add_static("/offline/", WEB_DIR / "offline")
     app.on_response_prepare.append(_no_stale_assets)
     app.on_startup.append(_startup)
     app.on_shutdown.append(_shutdown)

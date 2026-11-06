@@ -1,0 +1,28 @@
+/* Shown instead of everything else while the box has no internet. Nothing here animates
+   after it appears, so the Pi sits idle. */
+:root { color-scheme: dark; --font: "Noto Sans Display", "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; cursor: none; user-select: none; }
+body {
+  display: grid; place-items: center; color: #f4f6fb; font: 400 1.25vw/1.35 var(--font);
+  background: radial-gradient(70% 70% at 50% 42%, #2a1c26, #0b0a10 72%);
+}
+main { display: grid; justify-items: center; text-align: center; animation: appear .7s ease-out both; }
+@keyframes appear { from { opacity: 0; transform: translateY(1.5vh); } }
+svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.sign { width: 7vw; height: 7vw; color: #ffb4a8; margin-bottom: 3vh; }
+.sign circle { fill: currentColor; }
+.sign .slash { stroke: #ff6b57; stroke-width: 2.2; }
+h1 { font-size: 3.6vw; font-weight: 750; letter-spacing: -.02em; line-height: 1.1; }
+p { font-size: 1.6vw; color: #b9bfce; margin-top: 1.6vh; }
+.links { list-style: none; display: flex; gap: 1.6vw; margin: 5vh 0 4vh; }
+.link {
+  display: flex; align-items: center; gap: 1.1vw; min-width: 19vw; padding: 1.2vw 1.6vw; text-align: left;
+  border-radius: 1.1vw; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1);
+}
+.link[hidden] { display: none; }
+.link svg { width: 2.3vw; height: 2.3vw; flex: none; color: #ff8a78; }
+.link.up svg { color: #63dd9b; }
+.link strong { display: block; font-size: 1.25vw; font-weight: 650; }
+.link span { font-size: 1.05vw; color: #9aa3b8; }
+small { font-size: 1vw; color: #7f8799; }

@@ -711,3 +711,129 @@ def test_nightly_refresh_only_when_idle_on_home_and_once_a_night(monkeypatch):
         assert len(restarts) == 1 and browser.resume_saver
 
     asyncio.run(run())
+
+
+def test_offline_takes_a_few_failed_checks_and_online_is_believed_at_once():
+    from server.network import OFFLINE_AFTER, Connectivity
+
+    c = Connectivity()
+    assert c.online is None                # no verdict yet: the TV is left alone
+    for _ in range(OFFLINE_AFTER - 1):
+        c.record(False)
+    assert c.online is None
+    c.record(False)
+    assert c.online is False
+    c.record(True)
+    assert c.online is True
+    c.record(False)                        # one blip doesn't throw you out of a film
+    assert c.online is True
+
+
+def test_one_answering_probe_is_enough_and_a_login_page_is_not_internet(aiohttp_free_server):
+    import aiohttp
+
+    from server.network import reachable
+
+    async def run(base):
+        async with aiohttp.ClientSession() as http:
+            assert await reachable(http, (f"{base}/down", f"{base}/204"))
+            assert not await reachable(http, (f"{base}/login", "http://127.0.0.1:9/refused"))
+
+    aiohttp_free_server(run)
+
+
+@pytest.fixture
+def aiohttp_free_server():
+    import asyncio
+
+    from aiohttp import web
+
+    def serve(check):
+        async def go():
+            app = web.Application()
+            app.router.add_get("/204", _ok)
+            app.router.add_get("/down", _down)
+            app.router.add_get("/login", _login)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            port = site._server.sockets[0].getsockname()[1]
+            try:
+                await check(f"http://127.0.0.1:{port}")
+            finally:
+                await runner.cleanup()
+
+        asyncio.run(go())
+
+    return serve
+
+
+async def _ok(request):
+    from aiohttp import web
+    return web.Response(status=204)
+
+
+async def _down(request):
+    from aiohttp import web
+    return web.Response(status=503)
+
+
+async def _login(request):
+    from aiohttp import web
+    return web.Response(status=200)
+
+
+def test_interfaces_report_what_is_connected(tmp_path):
+    from server.network import interfaces
+
+    for name, state, wireless in (("eth0", "down", False), ("wlan0", "up", True), ("lo", "unknown", False)):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "operstate").write_text(state + "\n")
+        if wireless:
+            (d / "wireless").mkdir()
+    assert interfaces(tmp_path) == {"wifi": {"present": True, "connected": True},
+                                    "ethernet": {"present": True, "connected": False}}
+
+
+def test_without_internet_the_tv_only_shows_the_no_internet_screen(tmp_path):
+    import asyncio
+
+    from server.browser import Browser, CDPError
+    from server.config import Settings
+
+    s = Settings(data_dir=tmp_path)
+    b = Browser(s, SERVICES, lambda: None)
+    b._session = "S"
+    navigated = []
+
+    async def fake_send(method, params=None, **kw):
+        if method == "Page.navigate":
+            navigated.append(params["url"])
+            b.state.update(b._describe(params["url"], ""))
+        return {}
+
+    b.send = fake_send
+
+    async def run():
+        b.state.update(b._describe("https://www.netflix.com/browse", "Netflix"))
+        await b.apply_internet(False)                     # thrown out of an app
+        assert navigated == [s.offline_url] and b.state["view"] == "no-internet"
+        await b.apply_internet(False)                     # repeated checks: no reloading
+        await b.home()                                    # Home on the remote stays here
+        assert navigated[-1] == s.offline_url
+        await b.back()
+        with pytest.raises(CDPError):
+            await b.launch(SERVICES[0])
+        navigated.clear()
+        await b.apply_internet(True)                      # back online: home by itself
+        assert navigated == [s.launcher_url] and b.state["view"] == "launcher"
+        await b.apply_internet(True)
+        assert len(navigated) == 1
+        b.state.update(b._describe(s.cast_url, ""))       # sharing only needs the home network
+        await b.apply_internet(False)
+        assert len(navigated) == 1
+        await asyncio.gather(*b._tasks, return_exceptions=True)
+
+    asyncio.run(run())

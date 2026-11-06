@@ -146,6 +146,7 @@ class Browser:
         self.on_saver: Callable[[bool], Awaitable[None] | None] | None = None
         self._music_sent = ""
         self.resume_saver = False  # put the screensaver straight back up after attaching
+        self.no_internet = False   # the "home" to go to is the no-internet screen
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -272,8 +273,8 @@ class Browser:
             for extra in pages[1:]:  # a kiosk shows one tab; anything else is stray
                 self.spawn(self.send("Target.closeTarget", {"targetId": extra["targetId"]}, page=False))
         else:
-            created = await self.send("Target.createTarget", {"url": self.settings.launcher_url}, page=False)
-            target = {"targetId": created["targetId"], "url": self.settings.launcher_url, "title": ""}
+            created = await self.send("Target.createTarget", {"url": self.home_url}, page=False)
+            target = {"targetId": created["targetId"], "url": self.home_url, "title": ""}
 
         res = await self.send("Target.attachToTarget", {"targetId": target["targetId"], "flatten": True}, page=False)
         self._target, self._session = target["targetId"], res["sessionId"]
@@ -293,8 +294,8 @@ class Browser:
             # A tab Chromium discarded (e.g. under memory pressure) has no page to run in.
             # Load the home screen into it instead of retrying forever.
             log.warning("TV tab has no live page (%s); loading the home screen", exc)
-            await self.send("Page.navigate", {"url": self.settings.launcher_url})
-            target = {**target, "url": self.settings.launcher_url}
+            await self.send("Page.navigate", {"url": self.home_url})
+            target = {**target, "url": self.home_url}
         await self._refresh_viewport()
         if self.screencasting:  # a phone was mirroring the tab we lost
             await self.send("Page.startScreencast", SCREENCAST)
@@ -370,6 +371,8 @@ class Browser:
     def _describe(self, url: str, title: str) -> dict:
         if url.startswith(self.settings.cast_url):
             return {"view": "cast", "service_id": None, "url": url, "title": "Screen sharing"}
+        if url.startswith(self.settings.offline_url):
+            return {"view": "no-internet", "service_id": None, "url": url, "title": "No internet"}
         if url.startswith(self.settings.launcher_url):
             return {"view": "launcher", "service_id": None, "url": url, "title": "Home"}
         svc = service_for_url(self.services, url)
@@ -444,15 +447,32 @@ class Browser:
             await self.send("Emulation.setUserAgentOverride", {"userAgent": ua})
             self._ua_applied = ua
 
+    @property
+    def home_url(self) -> str:
+        return self.settings.offline_url if self.no_internet else self.settings.launcher_url
+
+    async def apply_internet(self, online: bool) -> None:
+        """Without internet the TV shows only the no-internet screen, and back home after.
+        Repeated after every check, so a TV that strayed (Chromium restarted, say) is put
+        right. Screen sharing is left alone: it only needs the home network."""
+        self.no_internet = not online
+        view = self.state["view"]
+        if not self._session or view == "cast":
+            return
+        if (view == "no-internet") == online:
+            await self.home()
+
     async def launch(self, svc: Service) -> None:
+        if self.no_internet:
+            raise CDPError("The TV box isn't connected to the internet")
         await self._apply_user_agent(svc)
         await self.send("Page.navigate", {"url": svc.url})
         await self._refresh_viewport()
 
     async def home(self) -> None:
-        leaving_app = self.state["view"] != "launcher"
+        leaving_app = self.state["view"] not in ("launcher", "no-internet")
         await self._apply_user_agent(None)
-        await self.send("Page.navigate", {"url": self.settings.launcher_url})
+        await self.send("Page.navigate", {"url": self.home_url})
         if leaving_app:
             self.spawn(self._release_memory())
 
@@ -478,9 +498,9 @@ class Browser:
         for t in targets:
             if t["type"] == "page" and t["targetId"] != self._target and not t["url"].startswith("devtools://"):
                 await self.send("Target.closeTarget", {"targetId": t["targetId"]}, page=False)
-        if not self.state["url"].startswith(self.settings.launcher_url):
+        if not self.state["url"].startswith(self.home_url):
             await self._apply_user_agent(None)
-            await self.send("Page.navigate", {"url": self.settings.launcher_url})
+            await self.send("Page.navigate", {"url": self.home_url})
         await self._release_memory()
 
     # ---- screen sharing (server/cast.py) ---------------------------------------
@@ -500,7 +520,7 @@ class Browser:
         await self.clear_to_home()
 
     async def back(self) -> None:
-        if self.state["view"] == "launcher":
+        if self.state["view"] in ("launcher", "no-internet"):
             return
         svc = self.current_service()
         if svc and svc.keys.get("back"):

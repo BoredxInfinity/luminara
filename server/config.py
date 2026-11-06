@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .network import PROBES
+
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 
@@ -26,6 +28,7 @@ class Settings:
     pin_enabled: bool = True
     boot_volume: int = 100  # percent set once per boot; 0 leaves volume alone
     https_port: int = 8443  # the secure remote (screen sharing); 0 turns it off
+    connectivity_probes: tuple[str, ...] = PROBES  # "are we online?" pages (server/network.py)
 
     @property
     def launcher_url(self) -> str:
@@ -34,6 +37,10 @@ class Settings:
     @property
     def cast_url(self) -> str:  # the TV side of screen sharing
         return f"http://127.0.0.1:{self.port}/cast"
+
+    @property
+    def offline_url(self) -> str:  # shown instead of everything else without internet
+        return f"http://127.0.0.1:{self.port}/offline"
 
 
 def load_settings(env: dict[str, str] | None = None) -> Settings:
@@ -48,6 +55,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         pin_enabled=env.get("TVBOX_PIN", "1") not in ("0", "false", "no"),
         boot_volume=max(0, min(100, int(env.get("TVBOX_BOOT_VOLUME", s.boot_volume)))),
         https_port=int(env.get("TVBOX_HTTPS_PORT", s.https_port)),
+        connectivity_probes=tuple(filter(None, env.get("TVBOX_PROBES", "").split(","))) or s.connectivity_probes,
     )
 
 
