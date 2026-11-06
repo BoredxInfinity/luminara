@@ -177,6 +177,7 @@ The installed version is recorded separately from the downloaded one, in `.git/t
 - **No internet:** if the box can't reach the internet for about half a minute, the TV shows only a "Can't connect to the internet" screen, with the state of Wi-Fi and Ethernet, instead of the home screen, an app or the screensaver. It goes home by itself as soon as the connection is back. Screen sharing isn't interrupted, since it only needs the home network.
 - **Wi-Fi that looks after itself:** if a power cut wipes the saved network, the box brings it back at the next boot from a copy on its boot partition. Change the network in **Settings → Wi-Fi**: the box tries the new one first and goes back to the old one if that fails.
 - **No scrollbars** anywhere on the TV (scrolling still works).
+- **No Cast button:** Chromium's own Cast icon is turned off on every video.
 - **Smooth on a Pi:** animations stick to what the GPU does cheaply (moving and fading layers). The home screen's background glow is drawn small and stretched rather than crossfading full-screen layers, a D-pad press does only a few milliseconds of work, and Chromium runs without Raspberry Pi OS's desktop flags (one of them made every page keep an accessibility tree up to date).
 - **Runs around the clock:**
   - Every 20 seconds the controller checks that Chromium and the TV page answer. A page frozen for a minute is restarted on the home screen; if Chromium itself stops answering for two minutes it's restarted.

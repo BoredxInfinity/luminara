@@ -44,7 +44,7 @@ fi
 # Start the browser itself instead, with the launcher's flags that matter here.
 if [ -x /usr/lib/chromium/chromium ]; then
   CHROMIUM=/usr/lib/chromium/chromium
-  BASE_FLAGS="--use-angle=gles --enable-gpu-rasterization --no-default-browser-check --disable-pings"
+  BASE_FLAGS="--use-angle=gles --enable-gpu-rasterization --no-default-browser-check --disable-pings --media-router=0"
 else
   CHROMIUM="$(command -v chromium || command -v chromium-browser)"
   BASE_FLAGS=""

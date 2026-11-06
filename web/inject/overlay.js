@@ -33,6 +33,21 @@
     }
   }
 
+  // ---- no Cast button (all frames) ------------------------------------------------
+  // Chromium draws its own Cast button in the top-left corner of any video that doesn't opt
+  // out, and casting has no place on a TV. Opt every video out as soon as it starts loading,
+  // or playing if it's somewhere those events can't be seen (not in the page, shadow DOM).
+  if (!window.__tvboxNoCast) {
+    window.__tvboxNoCast = true;
+    const noCast = (m) => { if (m instanceof HTMLVideoElement && !m.disableRemotePlayback) m.disableRemotePlayback = true; };
+    for (const type of ["loadstart", "play"]) addEventListener(type, (e) => noCast(e.target), true);
+    const realPlay = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (...args) {
+      noCast(this);
+      return realPlay.apply(this, args);
+    };
+  }
+
   if (window.top !== window || window.__tvbox) return;
 
   // No scrollbars on a TV. Chromium's own are off (--hide-scrollbars in kiosk.sh); this
