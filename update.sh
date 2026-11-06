@@ -61,7 +61,7 @@ apply() {  # $1 = 1 to force a restart
   changed() { grep -qE "$1" <<<"$changed_files"; }
 
   # System-level files: re-run the installer, which applies everything and restarts.
-  if changed '^(install\.sh|deploy/.*\.service|deploy/pam-|deploy/tvbox_wifi\.py$)'; then
+  if changed '^(install\.sh|deploy/.*\.service|deploy/pam-|deploy/tvbox_wifi\.py$|deploy/tvbox-wifi-routes$)'; then
     say "System setup changed; re-running install.sh"
     run_installer
   fi

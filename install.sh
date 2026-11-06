@@ -89,6 +89,11 @@ say "Wi-Fi that survives power cuts"
 # A copy owned by root, not the clone: sudo runs it for the TV user without a password.
 install -m 0755 -o root -g root "$APP_DIR/deploy/tvbox_wifi.py" /usr/local/sbin/tvbox-wifi
 systemctl start tvbox-wifi-restore.service || true  # also runs at every boot
+# Keeps the Wi-Fi address reachable while Ethernet is plugged in too.
+install -m 0755 -o root -g root "$APP_DIR/deploy/tvbox-wifi-routes" /etc/NetworkManager/dispatcher.d/50-tvbox-wifi-routes
+for dev in $(iw dev 2>/dev/null | awk '$1 == "Interface" {print $2}'); do
+  /etc/NetworkManager/dispatcher.d/50-tvbox-wifi-routes "$dev" up || true
+done
 
 say "Wi-Fi without power saving"
 # With power saving on, the Wi-Fi chip naps between packets: remote presses (and mirror and

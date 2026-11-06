@@ -295,7 +295,7 @@ Add an entry to `services.json`, then push and run `./update.sh`:
 - **Sign out of every streaming service:** run `sudo systemctl stop tvbox-kiosk && rm -rf ~/.config/tvbox-chromium && sudo systemctl start tvbox-kiosk`.
 - **Uninstall:**
   ```bash
-  sudo systemctl disable --now tvbox-kiosk tvbox-server && sudo rm /usr/local/sbin/tvbox-wifi /etc/systemd/system/tvbox-*.service /etc/sudoers.d/tvbox /etc/pam.d/tvbox-kiosk /etc/chromium/policies/managed/tvbox.json && sudo systemctl enable getty@tty1
+  sudo systemctl disable --now tvbox-kiosk tvbox-server && sudo rm /usr/local/sbin/tvbox-wifi /etc/NetworkManager/dispatcher.d/50-tvbox-wifi-routes /etc/systemd/system/tvbox-*.service /etc/sudoers.d/tvbox /etc/pam.d/tvbox-kiosk /etc/chromium/policies/managed/tvbox.json && sudo systemctl enable getty@tty1
   ```
 
 ## Security
